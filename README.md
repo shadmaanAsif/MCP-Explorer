@@ -130,7 +130,9 @@ This uses `console.error` (stderr), never `console.log` (stdout) — stdout is r
 
 ### Roadmap
 
-Every stage below gets its own git branch. The habit is: **branch → build → understand it → merge into `main` → branch again for the next stage.** Nothing moves to `main` until it's understood, not just working.
+Every stage (and every side exploration) below gets its own git branch. The habit is: **branch → build → understand it → merge into `main` → branch again for the next thing.** Nothing moves to `main` until it's understood, not just working.
+
+> **Branch numbering:** starting from this point, every new branch — a numbered stage or a side exploration — also gets a global sequence number prefix (`NN-description`), so the branch list alone shows true creation order, not just which stages happen to be numbered. `stage-1-basic-server` and `explore-mcp-client` predate this convention (they'd be #1 and #2) and keep their original names. Branch #3 turned out to be a side exploration too (`03-claude-md-constitution`, adding `CLAUDE.md`) rather than Stage 2 — proof the counter really is global and doesn't reserve numbers for stages in advance. Stage 2 is next in line and will be `04-stage-2-second-tool-validation`; anything after that gets whatever number comes next when it's actually created.
 
 ```mermaid
 flowchart LR
@@ -139,28 +141,27 @@ flowchart LR
     S3 --> S4["Stage 4<br/>Error handling<br/>+ real-time use case"]
 ```
 
-1. **Stage 1 — Basic server + one trivial tool** *(this branch)*
+1. **Stage 1 — Basic server + one trivial tool** *(on `main`)*
    A server exists, and it can do exactly one thing (`add`). Goal: understand server / tool / transport as separate concepts.
 
 2. **Stage 2 — Second tool + input validation**
    Add a second, slightly less trivial tool, and lean harder on `zod` — rejecting bad input with clear errors rather than trusting the caller. Goal: see how multiple tools coexist, and what "validation" means beyond just typing.
-   Branch: `stage-2-second-tool-validation`
+   Branch: `04-stage-2-second-tool-validation`
 
 3. **Stage 3 — Connect to a real data source / API**
    Swap a toy tool for one that does real (async) work — calling a public API or reading real data. Goal: handle async operations and things that can be slow or unavailable.
-   Branch: `stage-3-real-data-source`
+   Branch: `0N-stage-3-real-data-source` *(number assigned when created)*
 
 4. **Stage 4 — Error handling & a real-time use case**
    Harden the server against failures (bad responses, timeouts, partial data) and add something closer to a genuine use case. Goal: go from "it works when everything goes right" to "it behaves sensibly when it doesn't."
-   Branch: `stage-4-error-handling-realtime`
+   Branch: `0N-stage-4-error-handling-realtime` *(number assigned when created)*
 
 Only Stage 1 is implemented right now. Stages 2–4 above are the plan, not a promise of exact detail — it's normal for the specifics to shift once you're actually inside the previous stage's code.
 
 ### Next Steps
 
 1. Run the server yourself (see **How to Run** above) and confirm `add` works through the Inspector.
-2. Once `add` and the server/tool/transport model make sense, commit Stage 1 and merge it to `main`.
-3. Create `stage-2-second-tool-validation` off `main` and start Stage 2 — a second tool, plus real input validation.
+2. Create `04-stage-2-second-tool-validation` off `main` and start Stage 2 — a second tool, plus real input validation.
 
 If anything above didn't need to exist for `add` to work, that's a sign it snuck in ahead of schedule — flag it before moving on.
 
