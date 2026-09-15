@@ -208,10 +208,7 @@ If anything above didn't need to exist for `add` or `divide` to work, that's a s
 
 Everything under **MCP Server** covers one half of the protocol: a program that answers requests. The other half is a **client** — something that spawns a server, connects to it, and calls its tools. The Inspector (above) is one example of a client, but it's a pre-built tool with a UI. This side of the project is about writing a minimal client from scratch instead, in plain code, to see that half of the exchange directly.
 
-**Status: planned, not started.** This isn't one of the four numbered server stages — it's a separate, parallel branch for understanding the client side of MCP.
+**Status: built, on `main`.** This isn't one of the four numbered server stages — it was a separate, parallel exploration (originally `explore-mcp-client`, merged via [#2](https://github.com/shadmaanAsif/MCP-Explorer/pull/2)) for understanding the client side of MCP, and it's kept up to date as the server grows.
 
-- **Branch:** `explore-mcp-client`
-- **Goal:** spawn `build/index.js` directly from code (no Inspector, no UI), connect to it, call `listTools()` and `callTool()`, and print the result — the same handshake the Inspector does for you, written out by hand so it's fully visible.
-- **Why it's worth doing:** it confirms the client/server relationship holds regardless of who's on the client end — a human clicking buttons, or a few lines of TypeScript.
-
-This section will be filled in with the same level of detail as Stage 1 once that branch lands and its PR is open.
+- **What it does:** [`src/client.ts`](src/client.ts) spawns `build/index.js` directly from code (no Inspector, no UI), connects to it, calls `listTools()`, then `callTool()` against both current tools — `add(2, 3)`, `divide(10, 2)`, and `divide(10, 0)` to show a validation rejection coming back as data (`isError: true`), not a thrown exception. Run it with `npm run client`.
+- **Why it's worth doing:** it confirms the client/server relationship holds regardless of who's on the client end — a human clicking buttons, or a few lines of TypeScript. It's also a convenient scripted way to re-check both tools at once, without the Inspector's manual clicking.

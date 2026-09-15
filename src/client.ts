@@ -33,11 +33,30 @@ async function main() {
   );
 
   // Actually call the "add" tool — this sends "tools/call".
-  const result = await client.callTool({
+  const addResult = await client.callTool({
     name: 'add',
     arguments: { a: 2, b: 3 }
   });
-  console.log('Result of add(2, 3):', result.content);
+  console.log('Result of add(2, 3):', addResult.content);
+
+  // "divide" works the same way to call — the interesting part is what
+  // comes back when the input breaks its validation rule.
+  const divideResult = await client.callTool({
+    name: 'divide',
+    arguments: { a: 10, b: 2 }
+  });
+  console.log('Result of divide(10, 2):', divideResult.content);
+
+  // b: 0 breaks divide's .refine() rule. Note this call is NOT wrapped in
+  // try/catch — a validation rejection is a normal, resolved result with
+  // isError: true, not a thrown exception. callTool() only throws for
+  // things like the connection itself failing.
+  const rejectedResult = await client.callTool({
+    name: 'divide',
+    arguments: { a: 10, b: 0 }
+  });
+  console.log('Result of divide(10, 0):', rejectedResult.content);
+  console.log('  -> isError:', rejectedResult.isError);
 
   await client.close();
 }
