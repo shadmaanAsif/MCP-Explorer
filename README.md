@@ -1,27 +1,31 @@
-# MCP Demo
+# MCP Explorer
 
-A hands-on project for learning **MCP (Model Context Protocol)** by building a real server one small, understandable step at a time — instead of reading about MCP, we build it.
+A hands-on project for learning **MCP (Model Context Protocol)** by building both halves of the protocol ourselves — a server, then a client — one small, understandable step at a time.
 
-> This README is also published as a browsable page: **[MCP Demo Roadmap](https://claude.ai/code/artifact/2ac1d88f-d347-40a2-ac23-1febc68554d0)**. It mirrors everything here — keep both in sync as the plan changes.
+> This README is also published as a browsable page: **[MCP Explorer](https://claude.ai/code/artifact/2ac1d88f-d347-40a2-ac23-1febc68554d0)**. It mirrors everything here — keep both in sync as the plan changes.
 
-## Overview
+## MCP Server
+
+This half of the project is the one built so far: a real MCP server, growing in stages.
+
+### Overview
 
 This repo starts as small as an MCP server can possibly be: one file, one tool, no extra layers. From there, it grows in stages — each one adding a single new concept (a second tool, input validation, a real API, error handling) until it looks like something you'd actually use.
 
 The point isn't to rush to a "real" server. It's to build enough small, working versions that each new MCP concept has somewhere to attach itself in your head.
 
-## What is MCP?
+### What is MCP?
 
 MCP (Model Context Protocol) is a standard way for an AI assistant to call out to external tools and data, instead of every app inventing its own custom integration. You write an **MCP server** that exposes a small set of capabilities — mainly **tools** (functions the assistant can call) — and any MCP-compatible client (Claude Desktop, Claude Code, etc.) can discover and use them the same way. Think of it like a USB port for AI assistants: one common plug, many different devices behind it.
 
-## Initial Setup (Stage 1)
+### Initial Setup (Stage 1)
 
 Stage 1 is deliberately as small as a working MCP server can be: a server with a single tool that adds two numbers.
 
-### Folder structure
+#### Folder structure
 
 ```
-MCP-Demo/
+MCP-Explorer/
 ├── .gitignore
 ├── README.md
 ├── package.json
@@ -39,7 +43,7 @@ Here's why each piece exists — nothing here is optional scaffolding:
 
 Nothing else exists yet — no `src/tools/` folder, no config layer, no test framework. Those would be answers to problems Stage 1 doesn't have.
 
-### Dependencies
+#### Dependencies
 
 - **`@modelcontextprotocol/sdk`** — the official library that implements the MCP protocol itself (message formats, the server object, the transport). Without it we'd be hand-writing JSON-RPC message handling.
 - **`zod`** — a schema library. When we register the `add` tool, we use `zod` to say "this tool takes two numbers, `a` and `b`." The SDK uses that schema for two jobs at once: telling MCP clients what shape of input to send, *and* rejecting bad input at runtime.
@@ -47,7 +51,7 @@ Nothing else exists yet — no `src/tools/` folder, no config layer, no test fra
 
 > A note on `zod` here: giving the `add` tool a schema is not "Stage 2's input validation" — it's just how any MCP tool declares its shape, even the simplest one. Stage 2 will build on top of this with *richer* validation (custom error messages, rejecting out-of-range values, and so on).
 
-### The one tool: `add`
+#### The one tool: `add`
 
 [`src/index.ts`](src/index.ts) does three things, in order:
 
@@ -57,7 +61,7 @@ Nothing else exists yet — no `src/tools/` folder, no config layer, no test fra
 
 That's the whole mental model for Stage 1: **server → tool → transport**. Everything MCP does at a larger scale is built from these same three pieces.
 
-## How to Run
+### How to Run
 
 ```bash
 npm install
@@ -69,9 +73,9 @@ npm start
 
 On its own, the server will print `mcp-demo server running on stdio` to stderr and then just sit there — that's expected, not a hang. Keep reading to see why, and how to actually talk to it.
 
-## Understanding the Inspector
+### Understanding the Inspector
 
-### Why the server does nothing by itself
+#### Why the server does nothing by itself
 
 An MCP server never acts on its own — it only responds when a **client** sends it a request. Normally that client is a real AI assistant (Claude Desktop, Claude Code, etc.) deciding on its own when to call a tool. Since we don't have one of those wired up yet, we use the [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector): a small web UI that plays the role of "the client" — except *you* click the buttons instead of an AI deciding to.
 
@@ -84,7 +88,7 @@ Two things worth knowing about what's actually happening:
 - Your server and its client talk in **JSON-RPC** — small JSON messages like `{"method":"tools/call","params":{"name":"add","arguments":{"a":2,"b":3}}}` — sent over the server process's **stdin**, with replies written back over its **stdout**.
 - The Inspector is what actually *launches* your server and sends it those messages. The browser page itself doesn't speak MCP at all — it just tells the Inspector (via its own local proxy) what to send, and shows you what comes back.
 
-### Step by step: testing `add`
+#### Step by step: testing `add`
 
 1. **Build the server** (from inside this project folder — the next command uses a relative path):
    ```bash
@@ -99,11 +103,11 @@ Two things worth knowing about what's actually happening:
 5. The **Tools** tab fills in by itself with `add` — that's the Inspector automatically calling `tools/list` right after connecting.
 6. Click `add`, type numbers into `a` and `b`, click **Run Tool** — the sum comes back as the result.
 
-### One instance per connection — not the same as `npm start`
+#### One instance per connection — not the same as `npm start`
 
 Every time you click **Connect**, the Inspector spawns a **brand-new copy** of your server — a separate running process from any `npm start` / `npm run dev` you might already have open elsewhere. Same code, but two independent instances that share nothing: nothing sent to one shows up in the other. If you're testing through the Inspector, the terminal running `npm start` isn't part of that loop at all — you can ignore it.
 
-### What you actually need running
+#### What you actually need running
 
 To test a tool through the Inspector, this is the complete list — nothing else:
 
@@ -114,7 +118,7 @@ To test a tool through the Inspector, this is the complete list — nothing else
 
 Notice `npm start` / `npm run dev` isn't on that list. It's easy to assume "the server" needs to be running separately, but it doesn't — the Inspector builds nothing itself, but as long as `build/index.js` already exists on disk, it's entirely self-sufficient.
 
-### Where your own logs show up
+#### Where your own logs show up
 
 The `add` handler logs each call:
 
@@ -124,7 +128,7 @@ console.error(`[mcp-demo] add called with a=${a}, b=${b}`);
 
 This uses `console.error` (stderr), never `console.log` (stdout) — stdout is reserved for the JSON-RPC replies themselves, so anything else printed there would corrupt the protocol. The Inspector captures the spawned server's stderr and shows it inside its own UI — not in whatever terminal you happened to launch `npx @modelcontextprotocol/inspector` from.
 
-## Roadmap
+### Roadmap
 
 Every stage below gets its own git branch. The habit is: **branch → build → understand it → merge into `main` → branch again for the next stage.** Nothing moves to `main` until it's understood, not just working.
 
@@ -152,10 +156,22 @@ flowchart LR
 
 Only Stage 1 is implemented right now. Stages 2–4 above are the plan, not a promise of exact detail — it's normal for the specifics to shift once you're actually inside the previous stage's code.
 
-## Next Steps
+### Next Steps
 
 1. Run the server yourself (see **How to Run** above) and confirm `add` works through the Inspector.
 2. Once `add` and the server/tool/transport model make sense, commit Stage 1 and merge it to `main`.
 3. Create `stage-2-second-tool-validation` off `main` and start Stage 2 — a second tool, plus real input validation.
 
 If anything above didn't need to exist for `add` to work, that's a sign it snuck in ahead of schedule — flag it before moving on.
+
+## MCP Client
+
+Everything under **MCP Server** covers one half of the protocol: a program that answers requests. The other half is a **client** — something that spawns a server, connects to it, and calls its tools. The Inspector (above) is one example of a client, but it's a pre-built tool with a UI. This side of the project is about writing a minimal client from scratch instead, in plain code, to see that half of the exchange directly.
+
+**Status: planned, not started.** This isn't one of the four numbered server stages — it's a separate, parallel branch for understanding the client side of MCP.
+
+- **Branch:** `explore-mcp-client`
+- **Goal:** spawn `build/index.js` directly from code (no Inspector, no UI), connect to it, call `listTools()` and `callTool()`, and print the result — the same handshake the Inspector does for you, written out by hand so it's fully visible.
+- **Why it's worth doing:** it confirms the client/server relationship holds regardless of who's on the client end — a human clicking buttons, or a few lines of TypeScript.
+
+This section will be filled in with the same level of detail as Stage 1 once that branch lands and its PR is open.
