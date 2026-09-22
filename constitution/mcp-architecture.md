@@ -6,7 +6,13 @@ Condensed technical facts established while building this project. The narrative
 
 - **Server:** server → tool → transport. `new McpServer({ name, version })`, `server.registerTool(name, { title, description, inputSchema }, handler)`, `await server.connect(transport)`.
 - **Client:** transport → client → connect → discover → call → close. `new StdioClientTransport({ command, args })`, `new Client({ name, version })`, `await client.connect(transport)`, `await client.listTools()`, `await client.callTool({ name, arguments })`, `await client.close()`.
-- **The client always spawns the server, never the reverse.** True for the Inspector, the custom client in `src/client.ts`, and every real client (Claude Desktop, Claude.ai connectors, ChatGPT connectors).
+- **The client always spawns the server, never the reverse.** True for the Inspector, the custom client in `packages/client/src/client.ts`, and every real client (Claude Desktop, Claude.ai connectors, ChatGPT connectors).
+
+## Monorepo layout (since `06-monorepo-server-client-split`)
+
+- Server and client are separate npm-workspace packages (`packages/server`, `packages/client`), each with its own `package.json`/dependencies/`build/` output. Root `package.json` just declares `workspaces` and forwards scripts.
+- Because the client's `build/` is no longer a sibling of the server's, `packages/client/src/client.ts` resolves the server's entry point relative to its own file (`import.meta.dirname`), not relative to the current working directory — the same requirement a real client like Claude Desktop has, since it launches your server from wherever it happens to run.
+- External connections (Claude Desktop, Cursor, etc.) now point at `packages/server/build/index.js`, not `build/index.js`.
 
 ## Transport
 
