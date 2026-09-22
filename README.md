@@ -49,7 +49,7 @@ Nothing else exists yet — no `src/tools/` folder, no config layer, no test fra
 - **`zod`** — a schema library. When we register the `add` tool, we use `zod` to say "this tool takes two numbers, `a` and `b`." The SDK uses that schema for two jobs at once: telling MCP clients what shape of input to send, *and* rejecting bad input at runtime.
 - **`typescript`** / **`@types/node`** (dev-only) — the compiler itself, and type definitions for Node's built-in APIs, so the editor and compiler understand things like `process`.
 
-> A note on `zod` here: giving the `add` tool a schema is not "Stage 2's input validation" — it's just how any MCP tool declares its shape, even the simplest one. Stage 2 will build on top of this with *richer* validation (custom error messages, rejecting out-of-range values, and so on).
+> A note on `zod` here: giving the `add` tool a schema is not "Stage 2's input validation" — it's just how any MCP tool declares its shape, even the simplest one. Stage 2 (below) builds on top of this with *richer* validation: a custom rule with its own error message, not just a type.
 
 #### The one tool: `add`
 
@@ -60,6 +60,44 @@ Nothing else exists yet — no `src/tools/` folder, no config layer, no test fra
 3. **Connect a transport** — `StdioServerTransport`. "stdio" means the client talks to this process over its stdin/stdout, rather than over a network port. It's the simplest possible way to run an MCP server: the client just launches the process and starts writing/reading.
 
 That's the whole mental model for Stage 1: **server → tool → transport**. Everything MCP does at a larger scale is built from these same three pieces.
+
+### Stage 2 — Second tool + input validation *(this branch)*
+
+Stage 2 adds one more tool, `divide`, specifically to show what validation looks like once "wrong type" isn't the only way a call can be bad.
+
+#### Why `divide`, not something else
+
+`add` only ever needed zod to describe a *shape*: two numbers, no further rules — any two numbers make a valid call. `divide` needs a *rule* on top of that shape: `b` can be any number except zero. That's exactly the distinction Stage 1's note above was pointing at — a business rule, not just a type.
+
+```ts
+b: z
+  .number()
+  .refine((value) => value !== 0, {
+    message: 'b must not be zero — division by zero is undefined'
+  })
+  .describe('The denominator (must not be zero)')
+```
+
+`.refine()` layers a custom check on top of the base `z.number()` type check, with its own error message — that message is what the caller actually sees when the rule is broken.
+
+#### What happens on bad input — verified, not assumed
+
+Calling `divide` with `a: 10, b: 0` never reaches the handler function at all. The SDK validates arguments against the schema *before* your code runs, and returns this instead:
+
+```json
+{
+  "content": [{ "type": "text", "text": "MCP error -32602: Input validation error: Invalid arguments for tool divide: b must not be zero — division by zero is undefined at b" }],
+  "isError": true
+}
+```
+
+Two things worth noticing here:
+- **`isError: true`** — this is a *tool-level* error result, not a JSON-RPC protocol error and not a crash. The server keeps running; the client is just told this particular call failed, with a message tracing straight back to the `.refine()` message above.
+- The handler's `console.error('[mcp-demo] divide called...')` never prints for this call. Validation genuinely happens before your code ever sees the input — you don't need to (and shouldn't) re-check `b !== 0` yourself inside the handler.
+
+#### Try it yourself
+
+Through the Inspector: call `divide` with `a: 10, b: 2` (works, returns `5`), then `a: 10, b: 0` (rejected, with the message above).
 
 ### How to Run
 
@@ -144,7 +182,7 @@ flowchart LR
 1. **Stage 1 — Basic server + one trivial tool** *(on `main`)*
    A server exists, and it can do exactly one thing (`add`). Goal: understand server / tool / transport as separate concepts.
 
-2. **Stage 2 — Second tool + input validation**
+2. **Stage 2 — Second tool + input validation** *(this branch, not yet merged)*
    Add a second, slightly less trivial tool, and lean harder on `zod` — rejecting bad input with clear errors rather than trusting the caller. Goal: see how multiple tools coexist, and what "validation" means beyond just typing.
    Branch: `04-stage-2-second-tool-validation`
 
@@ -156,23 +194,21 @@ flowchart LR
    Harden the server against failures (bad responses, timeouts, partial data) and add something closer to a genuine use case. Goal: go from "it works when everything goes right" to "it behaves sensibly when it doesn't."
    Branch: `0N-stage-4-error-handling-realtime` *(number assigned when created)*
 
-Only Stage 1 is implemented right now. Stages 2–4 above are the plan, not a promise of exact detail — it's normal for the specifics to shift once you're actually inside the previous stage's code.
+Stages 1–2 are implemented; Stage 2 is on its own branch, waiting to be merged. Stages 3–4 above are the plan, not a promise of exact detail — it's normal for the specifics to shift once you're actually inside the previous stage's code.
 
 ### Next Steps
 
-1. Run the server yourself (see **How to Run** above) and confirm `add` works through the Inspector.
-2. Create `04-stage-2-second-tool-validation` off `main` and start Stage 2 — a second tool, plus real input validation.
+1. Run the server yourself (see **How to Run** above) and confirm both `add` and `divide` work through the Inspector — including `divide` correctly rejecting `b: 0`.
+2. Once that makes sense, this branch is ready for a PR into `main`.
+3. Start Stage 3 (a real data source / API) on the next numbered branch afterward.
 
-If anything above didn't need to exist for `add` to work, that's a sign it snuck in ahead of schedule — flag it before moving on.
+If anything above didn't need to exist for `add` or `divide` to work, that's a sign it snuck in ahead of schedule — flag it before moving on.
 
 ## MCP Client
 
 Everything under **MCP Server** covers one half of the protocol: a program that answers requests. The other half is a **client** — something that spawns a server, connects to it, and calls its tools. The Inspector (above) is one example of a client, but it's a pre-built tool with a UI. This side of the project is about writing a minimal client from scratch instead, in plain code, to see that half of the exchange directly.
 
-**Status: planned, not started.** This isn't one of the four numbered server stages — it's a separate, parallel branch for understanding the client side of MCP.
+**Status: built, on `main`.** This isn't one of the four numbered server stages — it was a separate, parallel exploration (originally `explore-mcp-client`, merged via [#2](https://github.com/shadmaanAsif/MCP-Explorer/pull/2)) for understanding the client side of MCP, and it's kept up to date as the server grows.
 
-- **Branch:** `explore-mcp-client`
-- **Goal:** spawn `build/index.js` directly from code (no Inspector, no UI), connect to it, call `listTools()` and `callTool()`, and print the result — the same handshake the Inspector does for you, written out by hand so it's fully visible.
-- **Why it's worth doing:** it confirms the client/server relationship holds regardless of who's on the client end — a human clicking buttons, or a few lines of TypeScript.
-
-This section will be filled in with the same level of detail as Stage 1 once that branch lands and its PR is open.
+- **What it does:** [`src/client.ts`](src/client.ts) spawns `build/index.js` directly from code (no Inspector, no UI), connects to it, calls `listTools()`, then `callTool()` against both current tools — `add(2, 3)`, `divide(10, 2)`, and `divide(10, 0)` to show a validation rejection coming back as data (`isError: true`), not a thrown exception. Run it with `npm run client`.
+- **Why it's worth doing:** it confirms the client/server relationship holds regardless of who's on the client end — a human clicking buttons, or a few lines of TypeScript. It's also a convenient scripted way to re-check both tools at once, without the Inspector's manual clicking.

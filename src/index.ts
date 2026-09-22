@@ -36,6 +36,38 @@ server.registerTool(
   }
 );
 
+// Stage 2's tool. "add" only needed zod to describe a *shape* (two numbers) —
+// any two numbers are valid. "divide" needs a *rule*: b can be any number
+// except zero. That's the difference between typing and validation — the
+// schema itself now rejects a bad call before our handler ever runs.
+server.registerTool(
+  'divide',
+  {
+    title: 'Divide two numbers',
+    description: 'Divides a by b and returns the quotient. Rejects division by zero.',
+    inputSchema: {
+      a: z.number().describe('The numerator'),
+      b: z
+        .number()
+        .refine((value) => value !== 0, {
+          message: 'b must not be zero — division by zero is undefined'
+        })
+        .describe('The denominator (must not be zero)')
+    }
+  },
+  async ({ a, b }) => {
+    console.error(`[mcp-demo] divide called with a=${a}, b=${b}`);
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `${a / b}`
+        }
+      ]
+    };
+  }
+);
+
 async function main() {
   // stdio means the client talks to us over this process's stdin/stdout,
   // rather than over a network port. It's the simplest way to run an MCP
