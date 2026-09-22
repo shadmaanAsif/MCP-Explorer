@@ -1,18 +1,16 @@
 {
-  "name": "mcp-demo",
+  "name": "mcp-explorer",
+  "private": true,
   "version": "0.1.0",
-  "description": "A learning project: building an MCP server one stage at a time.",
-  "type": "module",
-  "main": "build/index.js",
+  "description": "A learning project: building an MCP server one stage at a time — a monorepo with separate server and client packages.",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "build": "tsc",
-    "start": "node build/index.js",
-    "dev": "npm run build && npm run start",
-    "client": "node build/client.js"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
-    "zod": "^4.6.1"
+    "build": "npm run build --workspaces --if-present",
+    "start": "npm start --workspace=packages/server",
+    "dev": "npm run build && npm start",
+    "client": "npm start --workspace=packages/client"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
