@@ -68,6 +68,53 @@ server.registerTool(
   }
 );
 
+// Stage 3's tool. The first async handler that does real I/O instead of
+// pure math — a network call that can be slow or fail outright, not just
+// return a bad value. Uses Open-Meteo (no API key needed) to stay focused
+// on "async + a real external dependency" rather than credential handling.
+server.registerTool(
+  'get_weather',
+  {
+    title: 'Get current weather',
+    description: 'Fetches current temperature and wind speed for a latitude/longitude from Open-Meteo.',
+    inputSchema: {
+      latitude: z.number().min(-90).max(90).describe('Latitude in decimal degrees'),
+      longitude: z.number().min(-180).max(180).describe('Longitude in decimal degrees')
+    }
+  },
+  async ({ latitude, longitude }) => {
+    console.error(`[mcp-demo] get_weather called with latitude=${latitude}, longitude=${longitude}`);
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,wind_speed_10m`;
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        return {
+          isError: true,
+          content: [{ type: 'text', text: `Open-Meteo returned ${response.status} ${response.statusText}` }]
+        };
+      }
+      const data = await response.json();
+      const { temperature_2m, wind_speed_10m } = data.current;
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `${temperature_2m}${data.current_units.temperature_2m}, wind ${wind_speed_10m} ${data.current_units.wind_speed_10m}`
+          }
+        ]
+      };
+    } catch (error) {
+      // Network failure, DNS error, etc. — the request never got a response
+      // at all. Caught here so a flaky network turns into a normal tool
+      // error result, not an unhandled rejection that takes the server down.
+      return {
+        isError: true,
+        content: [{ type: 'text', text: `Failed to reach Open-Meteo: ${(error as Error).message}` }]
+      };
+    }
+  }
+);
+
 async function main() {
   // stdio means the client talks to us over this process's stdin/stdout,
   // rather than over a network port. It's the simplest way to run an MCP
