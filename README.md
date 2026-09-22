@@ -99,6 +99,21 @@ Two things worth noticing here:
 
 Through the Inspector: call `divide` with `a: 10, b: 2` (works, returns `5`), then `a: 10, b: 0` (rejected, with the message above).
 
+### Stage 3 — Connect to a real data source / API *(this branch)*
+
+Stage 3 adds `get_weather(latitude, longitude)`, calling [Open-Meteo](https://open-meteo.com/) (free, no API key) for current temperature and wind speed. It's the first tool doing real I/O instead of pure math.
+
+```ts
+const response = await fetch(url);
+if (!response.ok) {
+  return { isError: true, content: [{ type: 'text', text: `Open-Meteo returned ${response.status} ${response.statusText}` }] };
+}
+```
+
+The `try`/`catch` around the `fetch` catches network failure (DNS, unreachable host) the same way `divide`'s `.refine()` catches bad input — as a normal `isError: true` result, not a crash. Verified both paths directly: a real call against Open-Meteo, and a call against a deliberately unreachable host, which returned `Failed to reach Open-Meteo: fetch failed` instead of an unhandled rejection.
+
+This is deliberately *not* Stage 4's job yet — no retries, no timeout, no partial-data handling. Just: don't let the process die when the network doesn't cooperate.
+
 ### How to Run
 
 ```bash
@@ -182,27 +197,27 @@ flowchart LR
 1. **Stage 1 — Basic server + one trivial tool** *(on `main`)*
    A server exists, and it can do exactly one thing (`add`). Goal: understand server / tool / transport as separate concepts.
 
-2. **Stage 2 — Second tool + input validation** *(this branch, not yet merged)*
+2. **Stage 2 — Second tool + input validation** *(on `main`)*
    Add a second, slightly less trivial tool, and lean harder on `zod` — rejecting bad input with clear errors rather than trusting the caller. Goal: see how multiple tools coexist, and what "validation" means beyond just typing.
    Branch: `04-stage-2-second-tool-validation`
 
-3. **Stage 3 — Connect to a real data source / API**
+3. **Stage 3 — Connect to a real data source / API** *(this branch, not yet merged)*
    Swap a toy tool for one that does real (async) work — calling a public API or reading real data. Goal: handle async operations and things that can be slow or unavailable.
-   Branch: `0N-stage-3-real-data-source` *(number assigned when created)*
+   Branch: `05-stage-3-real-data-source`
 
 4. **Stage 4 — Error handling & a real-time use case**
    Harden the server against failures (bad responses, timeouts, partial data) and add something closer to a genuine use case. Goal: go from "it works when everything goes right" to "it behaves sensibly when it doesn't."
    Branch: `0N-stage-4-error-handling-realtime` *(number assigned when created)*
 
-Stages 1–2 are implemented; Stage 2 is on its own branch, waiting to be merged. Stages 3–4 above are the plan, not a promise of exact detail — it's normal for the specifics to shift once you're actually inside the previous stage's code.
+Stages 1–3 are implemented; Stage 3 is on its own branch, waiting to be merged. Stage 4 above is the plan, not a promise of exact detail.
 
 ### Next Steps
 
-1. Run the server yourself (see **How to Run** above) and confirm both `add` and `divide` work through the Inspector — including `divide` correctly rejecting `b: 0`.
+1. Run the server yourself and confirm `add`, `divide`, and `get_weather` all work through the Inspector — including `get_weather` against a real location.
 2. Once that makes sense, this branch is ready for a PR into `main`.
-3. Start Stage 3 (a real data source / API) on the next numbered branch afterward.
+3. Start Stage 4 (error handling + a real-time use case) on the next numbered branch afterward.
 
-If anything above didn't need to exist for `add` or `divide` to work, that's a sign it snuck in ahead of schedule — flag it before moving on.
+If anything above didn't need to exist for a tool to work, that's a sign it snuck in ahead of schedule — flag it before moving on.
 
 ## MCP Client
 

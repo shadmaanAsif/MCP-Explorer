@@ -58,6 +58,14 @@ async function main() {
   console.log('Result of divide(10, 0):', rejectedResult.content);
   console.log('  -> isError:', rejectedResult.isError);
 
+  // get_weather is Stage 3's real, async I/O tool — a genuine network call,
+  // not just a computation. Berlin's coordinates, chosen arbitrarily.
+  const weatherResult = await client.callTool({
+    name: 'get_weather',
+    arguments: { latitude: 52.52, longitude: 13.41 }
+  });
+  console.log('Result of get_weather(52.52, 13.41):', weatherResult.content);
+
   await client.close();
 }
 
