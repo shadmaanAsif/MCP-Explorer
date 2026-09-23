@@ -1,0 +1,61 @@
+body {
+  font-family: system-ui, sans-serif;
+  max-width: 640px;
+  margin: 2rem auto;
+  padding: 0 1rem;
+  color: #1a1a1a;
+}
+
+h1 {
+  font-size: 1.25rem;
+}
+
+.tool {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.tool h2 {
+  font-size: 1rem;
+  margin: 0 0 0.25rem;
+}
+
+.tool p {
+  color: #555;
+  font-size: 0.9rem;
+  margin: 0 0 0.75rem;
+}
+
+.tool label {
+  display: block;
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+
+.tool input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.4rem;
+  margin-top: 0.2rem;
+}
+
+.tool button {
+  margin-top: 0.75rem;
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+}
+
+pre {
+  background: #f5f5f5;
+  padding: 0.6rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  margin-top: 0.6rem;
+}
+
+pre.error {
+  background: #fdeaea;
+}
