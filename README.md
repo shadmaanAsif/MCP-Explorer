@@ -24,30 +24,43 @@ Stage 1 is deliberately as small as a working MCP server can be: a server with a
 
 #### Folder structure
 
+Originally this was one flat package (one `package.json`, one `src/`, shared by both the server and the custom client). As of `06-monorepo-server-client-split`, server and client are **fully separate npm packages** in an npm-workspaces monorepo — each with its own `package.json` (so each declares only the dependencies it actually uses — the client never needed `zod`, for instance) and its own `build/` output:
+
 ```
 MCP-Explorer/
 ├── .gitignore
 ├── README.md
-├── package.json
-├── tsconfig.json
-└── src/
-    └── index.ts
+├── package.json          # workspace root: no code, just wiring
+├── tsconfig.base.json     # compiler options shared by every package
+└── packages/
+    ├── server/
+    │   ├── package.json   # @mcp-explorer/server — its own deps, build, start
+    │   ├── tsconfig.json   # extends the base config, sets rootDir/outDir
+    │   └── src/
+    │       └── index.ts
+    └── client/
+        ├── package.json   # @mcp-explorer/client — its own deps, build, start
+        ├── tsconfig.json
+        └── src/
+            └── client.ts
 ```
 
 Here's why each piece exists — nothing here is optional scaffolding:
 
-- **`package.json`** — the project's manifest. It declares *what this project needs to run* (the MCP SDK, plus `zod` for describing tool inputs) and *how to build/run it* (the `build` and `start` scripts). Without it, npm has no idea what to install.
-- **`tsconfig.json`** — Node can't run `.ts` files directly, so this tells the TypeScript compiler (`tsc`) how to turn `src/*.ts` into plain JavaScript in `build/`. Notably `rootDir`/`outDir` keep source and compiled output cleanly separated.
-- **`src/index.ts`** — the entire server. At this stage there's exactly one file because there's exactly one thing going on: create a server, give it one tool, connect it to a client.
-- **`.gitignore`** — keeps `node_modules/` (reinstallable from `package.json`) and `build/` (regeneratable from `src/`) out of version control. Neither belongs in git history.
+- **Root `package.json`** — declares the `workspaces` field (`packages/*`) so `npm install` at the root links both packages together and hoists shared dependencies into one `node_modules`. Its `scripts` just forward to the right package (`npm run build` builds both; `npm start` / `npm run client` each target one workspace), so the top-level commands you already know didn't change.
+- **`tsconfig.base.json`** — the compiler options (`target`, `module`, `strict`, etc.) both packages need are identical, so they live once here instead of being copied twice. Each package's own `tsconfig.json` `extends` this and only adds its own `rootDir`/`outDir`.
+- **`packages/server/`** and **`packages/client/`** — each is a real, independent npm package: its own `package.json` (own name, own dependencies, own `build`/`start` scripts) and its own `src/` → `build/` pair. Splitting them this way means the client can never accidentally depend on something only the server needs (or vice versa) — the two halves of the protocol stay genuinely decoupled, not just organized into different folders of one package.
+- **`.gitignore`** — keeps every `node_modules/` and `build/` (server's, client's, and the root's) out of version control. Neither belongs in git history; the pattern matches at any depth, so one `.gitignore` still covers both packages.
 
-Nothing else exists yet — no `src/tools/` folder, no config layer, no test framework. Those would be answers to problems Stage 1 doesn't have.
+Nothing else exists yet beyond this split — no shared internal package, no test framework. Those would be answers to problems this project doesn't have yet.
 
 #### Dependencies
 
-- **`@modelcontextprotocol/sdk`** — the official library that implements the MCP protocol itself (message formats, the server object, the transport). Without it we'd be hand-writing JSON-RPC message handling.
-- **`zod`** — a schema library. When we register the `add` tool, we use `zod` to say "this tool takes two numbers, `a` and `b`." The SDK uses that schema for two jobs at once: telling MCP clients what shape of input to send, *and* rejecting bad input at runtime.
-- **`typescript`** / **`@types/node`** (dev-only) — the compiler itself, and type definitions for Node's built-in APIs, so the editor and compiler understand things like `process`.
+Now split per-package, matching what each half of the protocol actually needs:
+
+- **`@modelcontextprotocol/sdk`** (both `packages/server` and `packages/client`) — the official library that implements the MCP protocol itself (message formats, the server/client objects, the transport). Without it we'd be hand-writing JSON-RPC message handling.
+- **`zod`** (`packages/server` only) — a schema library. When we register the `add` tool, we use `zod` to say "this tool takes two numbers, `a` and `b`." The SDK uses that schema for two jobs at once: telling MCP clients what shape of input to send, *and* rejecting bad input at runtime. The client never validates a schema itself, so it never needed this dependency — a concrete example of why the split makes the dependency list honest instead of shared-and-unused.
+- **`typescript`** / **`@types/node`** (root-level `devDependencies`, dev-only) — the compiler itself, and type definitions for Node's built-in APIs. These live at the root rather than duplicated in both packages, since it's the same build tooling either way, not something specific to the server or the client.
 
 > A note on `zod` here: giving the `add` tool a schema is not "Stage 2's input validation" — it's just how any MCP tool declares its shape, even the simplest one. Stage 2 (below) builds on top of this with *richer* validation: a custom rule with its own error message, not just a type.
 
@@ -99,7 +112,7 @@ Two things worth noticing here:
 
 Through the Inspector: call `divide` with `a: 10, b: 2` (works, returns `5`), then `a: 10, b: 0` (rejected, with the message above).
 
-### Stage 3 — Connect to a real data source / API *(this branch)*
+### Stage 3 — Connect to a real data source / API *(on `main`)*
 
 Stage 3 adds `get_weather(latitude, longitude)`, calling [Open-Meteo](https://open-meteo.com/) (free, no API key) for current temperature and wind speed. It's the first tool doing real I/O instead of pure math.
 
@@ -122,7 +135,7 @@ npm run build
 npm start
 ```
 
-`npm run build` compiles `src/index.ts` into `build/index.js`; `npm start` runs the compiled server. (There's also `npm run dev`, which just does both in one step.)
+`npm run build` compiles both packages (`packages/server/src/index.ts` → `packages/server/build/index.js`, and the client the same way); `npm start` runs the compiled server specifically. (There's also `npm run dev`, which just does both in one step.) These are root-level scripts that forward to the right workspace — you never need to `cd` into `packages/server` yourself.
 
 On its own, the server will print `mcp-demo server running on stdio` to stderr and then just sit there — that's expected, not a hang. Keep reading to see why, and how to actually talk to it.
 
@@ -133,7 +146,7 @@ On its own, the server will print `mcp-demo server running on stdio` to stderr a
 An MCP server never acts on its own — it only responds when a **client** sends it a request. Normally that client is a real AI assistant (Claude Desktop, Claude Code, etc.) deciding on its own when to call a tool. Since we don't have one of those wired up yet, we use the [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector): a small web UI that plays the role of "the client" — except *you* click the buttons instead of an AI deciding to.
 
 ```
-You (clicking buttons)  →  Inspector  →  your server (build/index.js)
+You (clicking buttons)  →  Inspector  →  your server (packages/server/build/index.js)
 ```
 
 Two things worth knowing about what's actually happening:
@@ -149,10 +162,10 @@ Two things worth knowing about what's actually happening:
    ```
 2. **Start the Inspector**, also from inside this folder:
    ```bash
-   npx @modelcontextprotocol/inspector node build/index.js
+   npx @modelcontextprotocol/inspector node packages/server/build/index.js
    ```
 3. It prints a URL with a security token, e.g. `http://localhost:6274/?MCP_PROXY_AUTH_TOKEN=<token>`. Open that exact URL. (The token just proves it's really you talking to your own local Inspector — it isn't part of MCP itself.)
-4. Confirm **Command** is `node` and **Arguments** is `build/index.js`, then click **Connect**.
+4. Confirm **Command** is `node` and **Arguments** is `packages/server/build/index.js`, then click **Connect**.
 5. The **Tools** tab fills in by itself with `add` — that's the Inspector automatically calling `tools/list` right after connecting.
 6. Click `add`, type numbers into `a` and `b`, click **Run Tool** — the sum comes back as the result.
 
@@ -164,12 +177,12 @@ Every time you click **Connect**, the Inspector spawns a **brand-new copy** of y
 
 To test a tool through the Inspector, this is the complete list — nothing else:
 
-1. **The server is built** — `npm run build` has run at least once (and again after any edit), so `build/index.js` exists and is current.
-2. **The Inspector is running** — from inside this folder: `npx @modelcontextprotocol/inspector node build/index.js`.
-3. **The token is copied and pasted** — when it starts, the Inspector prints a URL like `http://localhost:6274/?MCP_PROXY_AUTH_TOKEN=<token>`. Copy everything after `TOKEN=` and paste it into the Configuration panel's **Proxy Session Token** field. Command/Arguments should be `node` / `build/index.js`.
+1. **The server is built** — `npm run build` has run at least once (and again after any edit), so `packages/server/build/index.js` exists and is current.
+2. **The Inspector is running** — from inside this folder: `npx @modelcontextprotocol/inspector node packages/server/build/index.js`.
+3. **The token is copied and pasted** — when it starts, the Inspector prints a URL like `http://localhost:6274/?MCP_PROXY_AUTH_TOKEN=<token>`. Copy everything after `TOKEN=` and paste it into the Configuration panel's **Proxy Session Token** field. Command/Arguments should be `node` / `packages/server/build/index.js`.
 4. **You've clicked Connect.**
 
-Notice `npm start` / `npm run dev` isn't on that list. It's easy to assume "the server" needs to be running separately, but it doesn't — the Inspector builds nothing itself, but as long as `build/index.js` already exists on disk, it's entirely self-sufficient.
+Notice `npm start` / `npm run dev` isn't on that list. It's easy to assume "the server" needs to be running separately, but it doesn't — the Inspector builds nothing itself, but as long as `packages/server/build/index.js` already exists on disk, it's entirely self-sufficient.
 
 #### Where your own logs show up
 
@@ -185,7 +198,7 @@ This uses `console.error` (stderr), never `console.log` (stdout) — stdout is r
 
 Every stage (and every side exploration) below gets its own git branch. The habit is: **branch → build → understand it → merge into `main` → branch again for the next thing.** Nothing moves to `main` until it's understood, not just working.
 
-> **Branch numbering:** starting from this point, every new branch — a numbered stage or a side exploration — also gets a global sequence number prefix (`NN-description`), so the branch list alone shows true creation order, not just which stages happen to be numbered. `stage-1-basic-server` and `explore-mcp-client` predate this convention (they'd be #1 and #2) and keep their original names. Branch #3 turned out to be a side exploration too (`03-claude-md-constitution`, adding `CLAUDE.md`) rather than Stage 2 — proof the counter really is global and doesn't reserve numbers for stages in advance. Stage 2 is next in line and will be `04-stage-2-second-tool-validation`; anything after that gets whatever number comes next when it's actually created.
+> **Branch numbering:** starting from this point, every new branch — a numbered stage or a side exploration — also gets a global sequence number prefix (`NN-description`), so the branch list alone shows true creation order, not just which stages happen to be numbered. `stage-1-basic-server` and `explore-mcp-client` predate this convention (they'd be #1 and #2) and keep their original names. Branch #3 turned out to be a side exploration too (`03-claude-md-constitution`, adding `CLAUDE.md`) rather than Stage 2 — proof the counter really is global and doesn't reserve numbers for stages in advance. Stage 2 landed as `04-stage-2-second-tool-validation`, Stage 3 as `05-stage-3-real-data-source`, and #6 was another side exploration (`06-monorepo-server-client-split`, splitting server/client into separate npm-workspace packages) — anything after that gets whatever number comes next when it's actually created.
 
 ```mermaid
 flowchart LR
@@ -201,7 +214,7 @@ flowchart LR
    Add a second, slightly less trivial tool, and lean harder on `zod` — rejecting bad input with clear errors rather than trusting the caller. Goal: see how multiple tools coexist, and what "validation" means beyond just typing.
    Branch: `04-stage-2-second-tool-validation`
 
-3. **Stage 3 — Connect to a real data source / API** *(this branch, not yet merged)*
+3. **Stage 3 — Connect to a real data source / API** *(on `main`)*
    Swap a toy tool for one that does real (async) work — calling a public API or reading real data. Goal: handle async operations and things that can be slow or unavailable.
    Branch: `05-stage-3-real-data-source`
 
@@ -209,13 +222,13 @@ flowchart LR
    Harden the server against failures (bad responses, timeouts, partial data) and add something closer to a genuine use case. Goal: go from "it works when everything goes right" to "it behaves sensibly when it doesn't."
    Branch: `0N-stage-4-error-handling-realtime` *(number assigned when created)*
 
-Stages 1–3 are implemented; Stage 3 is on its own branch, waiting to be merged. Stage 4 above is the plan, not a promise of exact detail.
+Stages 1–3 are implemented and merged. Branch #6 (`06-monorepo-server-client-split`, this branch, not yet merged) is a side exploration in between: splitting the server and client into separate npm-workspace packages, not a numbered stage itself. Stage 4 above is the plan, not a promise of exact detail.
 
 ### Next Steps
 
-1. Run the server yourself and confirm `add`, `divide`, and `get_weather` all work through the Inspector — including `get_weather` against a real location.
+1. Run `npm install && npm run build`, then confirm `add`, `divide`, and `get_weather` all still work — through both the Inspector (pointed at `packages/server/build/index.js` now) and `npm run client`.
 2. Once that makes sense, this branch is ready for a PR into `main`.
-3. Start Stage 4 (error handling + a real-time use case) on the next numbered branch afterward.
+3. Start Stage 4 (error handling + a real-time use case) on the next numbered branch afterward, now inside `packages/server`.
 
 If anything above didn't need to exist for a tool to work, that's a sign it snuck in ahead of schedule — flag it before moving on.
 
@@ -225,5 +238,10 @@ Everything under **MCP Server** covers one half of the protocol: a program that 
 
 **Status: built, on `main`.** This isn't one of the four numbered server stages — it was a separate, parallel exploration (originally `explore-mcp-client`, merged via [#2](https://github.com/shadmaanAsif/MCP-Explorer/pull/2)) for understanding the client side of MCP, and it's kept up to date as the server grows.
 
-- **What it does:** [`src/client.ts`](src/client.ts) spawns `build/index.js` directly from code (no Inspector, no UI), connects to it, calls `listTools()`, then `callTool()` against both current tools — `add(2, 3)`, `divide(10, 2)`, and `divide(10, 0)` to show a validation rejection coming back as data (`isError: true`), not a thrown exception. Run it with `npm run client`.
-- **Why it's worth doing:** it confirms the client/server relationship holds regardless of who's on the client end — a human clicking buttons, or a few lines of TypeScript. It's also a convenient scripted way to re-check both tools at once, without the Inspector's manual clicking.
+- **What it does:** [`packages/client/src/client.ts`](packages/client/src/client.ts) spawns the server's compiled entry point directly from code (no Inspector, no UI), connects to it, calls `listTools()`, then `callTool()` against every current tool — `add(2, 3)`, `divide(10, 2)`, `divide(10, 0)` to show a validation rejection coming back as data (`isError: true`, not a thrown exception), and `get_weather`. Run it with `npm run client` from the repo root.
+- **A detail from the monorepo split:** since Stage `06-monorepo-server-client-split`, server and client are separate packages with separate `build/` output, so the client can no longer assume the server's compiled file is a sibling of wherever it's run from. It resolves the path itself, relative to its own file location:
+  ```ts
+  const serverEntry = path.resolve(import.meta.dirname, '../../server/build/index.js');
+  ```
+  This makes the client correct regardless of the current working directory it's launched from — the same property a real client like Claude Desktop needs, since it launches your server from wherever *it* happens to run, not from inside this repo.
+- **Why it's worth doing:** it confirms the client/server relationship holds regardless of who's on the client end — a human clicking buttons, or a few lines of TypeScript. It's also a convenient scripted way to re-check every tool at once, without the Inspector's manual clicking.

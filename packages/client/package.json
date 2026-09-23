@@ -1,0 +1,14 @@
+{
+  "name": "@mcp-explorer/client",
+  "version": "0.1.0",
+  "description": "A minimal custom MCP client for testing the server package.",
+  "type": "module",
+  "main": "build/connection.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node build/client.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0"
+  }
+}
