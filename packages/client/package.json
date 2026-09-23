@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "A minimal custom MCP client for testing the server package.",
   "type": "module",
-  "main": "build/client.js",
+  "main": "build/connection.js",
   "scripts": {
     "build": "tsc",
     "start": "node build/client.js"

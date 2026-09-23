@@ -1,34 +1,12 @@
-import path from 'node:path';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { connectToServer } from './connection.js';
 
 // This is a minimal custom MCP CLIENT — not part of the mcp-demo server.
 // It exists to see the other half of the protocol: the side that spawns a
 // server, connects to it, and calls its tools, the same way Claude Desktop
 // or the Inspector do — just as plain code instead of a UI.
 
-// Server and client are now separate packages (separate build/ output), so
-// this path is resolved relative to this file's own location rather than
-// assumed to be a sibling of whatever directory the command was run from.
-const serverEntry = path.resolve(import.meta.dirname, '../../server/build/index.js');
-
 async function main() {
-  // The client is the one that spawns the server as its own child process
-  // and talks to it over that process's stdin/stdout — same relationship
-  // the Inspector has with the server, just written out by hand here.
-  const transport = new StdioClientTransport({
-    command: 'node',
-    args: [serverEntry]
-  });
-
-  const client = new Client({
-    name: 'mcp-demo-test-client',
-    version: '0.1.0'
-  });
-
-  // connect() does the whole handshake for you: it spawns the server,
-  // sends "initialize", and waits for the server's reply.
-  await client.connect(transport);
+  const client = await connectToServer();
   console.log('Connected to server.');
 
   // Ask the server what tools it has — this sends "tools/list".
