@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MCP Explorer — Dashboard</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  h1 { font-size: 1.25rem; }
+  .tool { border: 1px solid #ddd; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+  .tool h2 { font-size: 1rem; margin: 0 0 0.25rem; }
+  .tool p { color: #555; font-size: 0.9rem; margin: 0 0 0.75rem; }
+  .tool label { display: block; font-size: 0.85rem; margin-top: 0.5rem; }
+  .tool input { width: 100%; box-sizing: border-box; padding: 0.4rem; margin-top: 0.2rem; }
+  .tool button { margin-top: 0.75rem; padding: 0.4rem 0.9rem; cursor: pointer; }
+  pre { background: #f5f5f5; padding: 0.6rem; border-radius: 6px; font-size: 0.85rem; white-space: pre-wrap; margin-top: 0.6rem; }
+  pre.error { background: #fdeaea; }
+</style>
+</head>
+<body>
+<h1>MCP Explorer — Dashboard</h1>
+<p>A GUI over the MCP server, driven by <code>@mcp-explorer/client</code>. Fills in a form per tool from its live schema.</p>
+<div id="tools">Loading tools…</div>
+
+<script>
+async function loadTools() {
+  const res = await fetch('/api/tools');
+  const tools = await res.json();
+  const container = document.getElementById('tools');
+  container.innerHTML = '';
+
+  for (const tool of tools) {
+    const props = tool.inputSchema?.properties ?? {};
+    const fieldNames = Object.keys(props);
+
+    const el = document.createElement('div');
+    el.className = 'tool';
+    el.innerHTML = `
+      <h2>${tool.name}</h2>
+      <p>${tool.description ?? ''}</p>
+      ${fieldNames.map((name) => `
+        <label>${name}
+          <input type="${props[name].type === 'number' ? 'number' : 'text'}" data-field="${name}">
+        </label>
+      `).join('')}
+      <button type="button">Run</button>
+      <pre class="result" hidden></pre>
+    `;
+
+    el.querySelector('button').addEventListener('click', async () => {
+      const args = {};
+      for (const input of el.querySelectorAll('input')) {
+        args[input.dataset.field] = input.type === 'number' ? Number(input.value) : input.value;
+      }
+
+      const pre = el.querySelector('.result');
+      pre.hidden = false;
+      pre.className = 'result';
+      pre.textContent = 'Running…';
+
+      const res = await fetch('/api/call', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: tool.name, arguments: args })
+      });
+      const result = await res.json();
+      pre.className = result.isError ? 'result error' : 'result';
+      pre.textContent = JSON.stringify(result.content, null, 2);
+    });
+
+    container.appendChild(el);
+  }
+}
+
+loadTools().catch((err) => {
+  document.getElementById('tools').textContent = 'Failed to load tools: ' + err.message;
+});
+</script>
+</body>
+</html>

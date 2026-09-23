@@ -10,7 +10,8 @@
     "build": "npm run build --workspaces --if-present",
     "start": "npm start --workspace=packages/server",
     "dev": "npm run build && npm start",
-    "client": "npm start --workspace=packages/client"
+    "client": "npm start --workspace=packages/client",
+    "web": "npm run build --workspace=packages/web && npm start --workspace=packages/web"
   },
   "devDependencies": {
     "typescript": "^7.0.2",

@@ -1,0 +1,18 @@
+{
+  "name": "@mcp-explorer/web",
+  "version": "0.1.0",
+  "description": "A minimal browser GUI for the MCP server, built on top of @mcp-explorer/client.",
+  "type": "module",
+  "main": "build/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "PORT=4767 node build/server.js"
+  },
+  "dependencies": {
+    "@mcp-explorer/client": "0.1.0",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21"
+  }
+}
