@@ -194,6 +194,29 @@ console.error(`[mcp-demo] add called with a=${a}, b=${b}`);
 
 This uses `console.error` (stderr), never `console.log` (stdout) — stdout is reserved for the JSON-RPC replies themselves, so anything else printed there would corrupt the protocol. The Inspector captures the spawned server's stderr and shows it inside its own UI — not in whatever terminal you happened to launch `npx @modelcontextprotocol/inspector` from.
 
+### Connecting from a Real Client (Cursor)
+
+The Inspector is a stand-in for "the client" — useful for testing, but a real AI assistant talks to this server the same way, just deciding on its own when to call a tool instead of you clicking buttons. [Cursor](https://cursor.com/) is an MCP client out of the box: point it at the compiled server and it does its own `tools/list` / `tools/call`.
+
+Add this to Cursor's `mcp.json` (Cursor Settings → MCP, or `~/.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "mcp-demo": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/absolute/path/to/MCP-Explorer/packages/server/build/index.js"]
+    }
+  }
+}
+```
+
+- The path must point at `packages/server/build/index.js` (the compiled output), so `npm run build` needs to have run at least once — and again after any server change.
+- `"type": "stdio"` matches exactly how the Inspector talks to it: Cursor launches this as a subprocess and exchanges JSON-RPC over its stdin/stdout.
+
+Restart Cursor (or reload its MCP servers) afterward, and `add`, `divide`, and `get_weather` show up as tools the assistant can call on its own.
+
 ### Roadmap
 
 Every stage (and every side exploration) below gets its own git branch. The habit is: **branch → build → understand it → merge into `main` → branch again for the next thing.** Nothing moves to `main` until it's understood, not just working.
