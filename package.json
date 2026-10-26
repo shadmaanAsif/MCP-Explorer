@@ -2,21 +2,19 @@
   "name": "mcp-explorer",
   "private": true,
   "version": "0.1.0",
-  "description": "A learning project: building an MCP server one stage at a time — a monorepo with separate server and client packages.",
-  "workspaces": [
-    "packages/*"
-  ],
+  "description": "A learning project: building an MCP server one stage at a time \u2014 a monorepo with separate server and client packages.",
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "start": "npm start --workspace=packages/server",
-    "start:http": "npm run start:http --workspace=packages/server",
-    "dev": "npm run build && npm start",
-    "client": "npm start --workspace=packages/client",
-    "web": "npm run build --workspace=packages/web && npm start --workspace=packages/web",
-    "web:dev": "npm run dev --workspace=packages/web"
+    "build": "pnpm -r --if-present run build",
+    "start": "pnpm --filter @mcp-explorer/server start",
+    "start:http": "pnpm --filter @mcp-explorer/server start:http",
+    "dev": "pnpm build && pnpm start",
+    "client": "pnpm --filter @mcp-explorer/client start",
+    "web": "pnpm --filter @mcp-explorer/web build && pnpm --filter @mcp-explorer/web start",
+    "web:dev": "pnpm --filter @mcp-explorer/web dev"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
     "@types/node": "^22.10.5"
-  }
+  },
+  "packageManager": "pnpm@12.8.1"
 }
