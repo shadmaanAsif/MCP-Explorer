@@ -1,9 +1,10 @@
 import { connectToServer } from './connection.js';
 
 // This is a minimal custom MCP CLIENT — not part of the mcp-demo server.
-// It exists to see the other half of the protocol: the side that spawns a
-// server, connects to it, and calls its tools, the same way Claude Desktop
-// or the Inspector do — just as plain code instead of a UI.
+// It exists to see the other half of the protocol: the side that connects to
+// a running server and calls its tools, the same way Claude Desktop or the
+// Inspector do — just as plain code instead of a UI. Start the server first
+// (npm run start:http --workspace=packages/server).
 
 async function main() {
   const client = await connectToServer();
