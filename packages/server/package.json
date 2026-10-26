@@ -6,7 +6,8 @@
   "main": "build/index.js",
   "scripts": {
     "build": "tsc",
-    "start": "node build/index.js"
+    "start": "node build/index.js",
+    "start:http": "node build/http.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

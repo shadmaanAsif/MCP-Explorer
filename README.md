@@ -217,18 +217,36 @@ Add this to Cursor's `mcp.json` (Cursor Settings → MCP, or `~/.cursor/mcp.json
 
 Restart Cursor (or reload its MCP servers) afterward, and `add`, `divide`, and `get_weather` show up as tools the assistant can call on its own.
 
+### Streamable HTTP (second entry point)
+
+Since `08-server-http-transport`, the tools live in [`create-server.ts`](packages/server/src/create-server.ts) as a `createServer()` factory, and there are two entry points that connect it to a transport:
+
+- [`index.ts`](packages/server/src/index.ts) — **stdio**. One `McpServer` for the life of the process, spawned by the client (Inspector, Cursor, etc.). `npm start --workspace=packages/server`.
+- [`http.ts`](packages/server/src/http.ts) — **Streamable HTTP**. A standalone process listening on `PORT` (default `4768`); `POST /mcp` handles requests in **stateless** mode (`sessionIdGenerator: undefined`), building a fresh `McpServer` per request. `npm run start:http --workspace=packages/server`.
+
+Both serve identical tools — it's one server definition, two ways to run it. `@mcp-explorer/client` and the web dashboard connect over HTTP (`MCP_SERVER_URL`, default `http://localhost:4768/mcp`), so the server has to be running first. Stateless mode is enough while every tool is a single request/response; anything that pushes updates, remembers a client, or resumes needs **stateful** mode (an `Mcp-Session-Id` header plus a map of live sessions) — planned for Stage 4 below.
+
 ### Roadmap
 
 Every stage (and every side exploration) below gets its own git branch. The habit is: **branch → build → understand it → merge into `main` → branch again for the next thing.** Nothing moves to `main` until it's understood, not just working.
 
-> **Branch numbering:** starting from this point, every new branch — a numbered stage or a side exploration — also gets a global sequence number prefix (`NN-description`), so the branch list alone shows true creation order, not just which stages happen to be numbered. `stage-1-basic-server` and `explore-mcp-client` predate this convention (they'd be #1 and #2) and keep their original names. Branch #3 turned out to be a side exploration too (`03-claude-md-constitution`, adding `CLAUDE.md`) rather than Stage 2 — proof the counter really is global and doesn't reserve numbers for stages in advance. Stage 2 landed as `04-stage-2-second-tool-validation`, Stage 3 as `05-stage-3-real-data-source`, #6 was another side exploration (`06-monorepo-server-client-split`, splitting server/client into separate npm-workspace packages), and #7 (`07-web-nextjs-react`, rewriting the web dashboard as Next.js + React) followed it — anything after that gets whatever number comes next when it's actually created.
+> **Branch numbering:** starting from this point, every new branch — a numbered stage or a side exploration — also gets a global sequence number prefix (`NN-description`), so the branch list alone shows true creation order, not just which stages happen to be numbered. `stage-1-basic-server` and `explore-mcp-client` predate this convention (they'd be #1 and #2) and keep their original names. Branch #3 turned out to be a side exploration too (`03-claude-md-constitution`, adding `CLAUDE.md`) rather than Stage 2 — proof the counter really is global and doesn't reserve numbers for stages in advance. Stage 2 landed as `04-stage-2-second-tool-validation`, Stage 3 as `05-stage-3-real-data-source`, #6 was another side exploration (`06-monorepo-server-client-split`, splitting server/client into separate npm-workspace packages), and #7 (`07-web-nextjs-react`, rewriting the web dashboard as Next.js + React) followed it, and #8 (`08-server-http-transport`, adding a Streamable HTTP entry point to the server and moving the client onto it) came after that — anything after that gets whatever number comes next when it's actually created.
 
 ```mermaid
 flowchart LR
     S1["Stage 1<br/>Basic server<br/>+ one tool"] --> S2["Stage 2<br/>Second tool<br/>+ input validation"]
     S2 --> S3["Stage 3<br/>Real data source<br/>/ API"]
-    S3 --> S4["Stage 4<br/>Error handling<br/>+ real-time use case"]
+    S3 --> S4["Stage 4<br/>Error handling, real-time<br/>+ stateful HTTP"]
+    S4 --> S5["Stage 5<br/>Resources, prompts<br/>+ completions"]
+    S5 --> S6["Stage 6<br/>Testing + CI"]
+    S6 --> S7["Stage 7<br/>Authentication"]
+    S7 --> S8["Stage 8<br/>Authorization<br/>+ hardening"]
+    S8 --> S9["Stage 9<br/>Persistence<br/>+ scaling"]
+    S9 --> S10["Stage 10<br/>Observability"]
+    S10 --> S11["Stage 11<br/>Containerize<br/>+ deploy"]
 ```
+
+Stages 1–4 build the server; **Stages 5–11 are the enterprise track** — what separates a demo server from one a team can run in production.
 
 1. **Stage 1 — Basic server + one trivial tool** *(on `main`)*
    A server exists, and it can do exactly one thing (`add`). Goal: understand server / tool / transport as separate concepts.
@@ -241,42 +259,71 @@ flowchart LR
    Swap a toy tool for one that does real (async) work — calling a public API or reading real data. Goal: handle async operations and things that can be slow or unavailable.
    Branch: `05-stage-3-real-data-source`
 
-4. **Stage 4 — Error handling & a real-time use case**
-   Harden the server against failures (bad responses, timeouts, partial data) and add something closer to a genuine use case. Goal: go from "it works when everything goes right" to "it behaves sensibly when it doesn't."
+4. **Stage 4 — Error handling, a real-time use case & stateful HTTP**
+   Harden the server against failures (bad responses, timeouts, partial data) and add something closer to a genuine use case: a tool that pushes progress to the client while it runs. That needs **stateful Streamable HTTP** — an `Mcp-Session-Id` issued on `initialize`, a map of live sessions, one `McpServer` per session, and `GET`/`DELETE` on `/mcp` alongside `POST`. Goal: go from "it works when everything goes right" to "it behaves sensibly when it doesn't," and see why sessions exist at all.
    Branch: `0N-stage-4-error-handling-realtime` *(number assigned when created)*
 
-Stages 1–3 are implemented and merged. Branches #6 (`06-monorepo-server-client-split`, splitting the server and client into separate npm-workspace packages) and #7 (`07-web-nextjs-react`, this branch, not yet merged — rewriting the web dashboard as Next.js + React) are side explorations in between, not numbered stages themselves. Stage 4 above is the plan, not a promise of exact detail.
+5. **Stage 5 — Resources, prompts & completions**
+   Tools are one of three server primitives. Add **resources** (read-only data a client can attach, addressed by URI) and **prompts** (reusable templates the user picks), plus argument completion. Goal: know which primitive fits which job instead of making everything a tool.
+   Branch: `0N-stage-5-resources-prompts` *(number assigned when created)*
+
+6. **Stage 6 — Testing & CI**
+   Unit-test tools, integration-test the server through an in-memory transport and through real HTTP, add contract checks on tool schemas, and run it all in GitHub Actions on every PR. Goal: change a server safely before it has real users.
+   Branch: `0N-stage-6-testing-ci`
+
+7. **Stage 7 — Authentication**
+   Protect `/mcp` per the MCP authorization spec: the server acts as an OAuth 2.1 *resource server*, validates bearer tokens (JWT signature, issuer, audience, expiry), returns `401` with `WWW-Authenticate`, and serves protected-resource metadata so clients can discover the auth server. Goal: know who is calling.
+   Branch: `0N-stage-7-authentication`
+
+8. **Stage 8 — Authorization & security hardening**
+   Per-tool permissions from token scopes, per-user/tenant data isolation, `Origin` validation (DNS rebinding), rate limiting, request size limits, output sanitization, secret management, and an audit log of every tool call. Goal: know what each caller may do, and be able to prove what they did.
+   Branch: `0N-stage-8-authorization-hardening`
+
+9. **Stage 9 — Persistence & horizontal scaling**
+   Replace the in-memory session map with a shared store (e.g. Redis), add resumable streams (`Last-Event-ID` with an event store), and run several instances behind a load balancer. Goal: survive restarts and scale out without losing sessions.
+   Branch: `0N-stage-9-persistence-scaling`
+
+10. **Stage 10 — Observability & operations**
+    Structured logs with a request/session id, OpenTelemetry traces across tool calls and upstream APIs, metrics (latency, error rate, active sessions), health/readiness endpoints, timeouts, cancellation, and graceful shutdown. Goal: see what the server is doing in production, and stop it without dropping work.
+    Branch: `0N-stage-10-observability`
+
+11. **Stage 11 — Containerize & deploy**
+    Dockerfile, environment-based config, a CI/CD pipeline to a real host, a gateway/reverse proxy (TLS, no SSE buffering), and a versioning and deprecation policy for tools. Goal: ship it, update it, and roll it back.
+    Branch: `0N-stage-11-containerize-deploy`
+
+**Where we are:** Stages 1–3 are implemented and merged; Stage 4 hasn't started. Branches #6 (`06-monorepo-server-client-split`) and #7 (`07-web-nextjs-react`) are merged side explorations, and #8 (`08-server-http-transport`, this branch — stateless Streamable HTTP on the server, client and web moved onto it) is the current one, not a numbered stage. Stages 4–11 above are the plan, not a promise of exact detail.
 
 ### Next Steps
 
-1. Run `npm install && npm run build`, then confirm `add`, `divide`, and `get_weather` all still work — through both the Inspector (pointed at `packages/server/build/index.js` now) and `npm run client`.
+1. Run `npm install && npm run build`, start the HTTP server (`npm run start:http --workspace=packages/server`), then confirm `add`, `divide`, and `get_weather` work through `npm run client` and `npm run web`; the Inspector still works over stdio against `packages/server/build/index.js`.
 2. Once that makes sense, this branch is ready for a PR into `main`.
-3. Start Stage 4 (error handling + a real-time use case) on the next numbered branch afterward, now inside `packages/server`.
+3. Start Stage 4 (error handling, a real-time use case, stateful HTTP) on the next numbered branch afterward, inside `packages/server`.
 
 If anything above didn't need to exist for a tool to work, that's a sign it snuck in ahead of schedule — flag it before moving on.
 
 ## MCP Client
 
-Everything under **MCP Server** covers one half of the protocol: a program that answers requests. The other half is a **client** — something that spawns a server, connects to it, and calls its tools. The Inspector (above) is one example of a client, but it's a pre-built tool with a UI. This side of the project is about writing a minimal client from scratch instead, in plain code, to see that half of the exchange directly.
+Everything under **MCP Server** covers one half of the protocol: a program that answers requests. The other half is a **client** — something that connects to a server and calls its tools. The Inspector (above) is one example of a client, but it's a pre-built tool with a UI. This side of the project is about writing a minimal client from scratch instead, in plain code, to see that half of the exchange directly.
 
 **Status: built, on `main`.** This isn't one of the four numbered server stages — it was a separate, parallel exploration (originally `explore-mcp-client`, merged via [#2](https://github.com/shadmaanAsif/MCP-Explorer/pull/2)) for understanding the client side of MCP, and it's kept up to date as the server grows.
 
-- **What it does:** [`packages/client/src/client.ts`](packages/client/src/client.ts) spawns the server's compiled entry point directly from code (no Inspector, no UI), connects to it, calls `listTools()`, then `callTool()` against every current tool — `add(2, 3)`, `divide(10, 2)`, `divide(10, 0)` to show a validation rejection coming back as data (`isError: true`, not a thrown exception), and `get_weather`. Run it with `npm run client` from the repo root.
-- **A detail from the monorepo split:** since Stage `06-monorepo-server-client-split`, server and client are separate packages with separate `build/` output, so the client can no longer assume the server's compiled file is a sibling of wherever it's run from. It resolves the path itself, relative to its own file location:
+- **What it does:** [`packages/client/src/client.ts`](packages/client/src/client.ts) connects to the running HTTP server from code (no Inspector, no UI), calls `listTools()`, then `callTool()` against every current tool — `add(2, 3)`, `divide(10, 2)`, `divide(10, 0)` to show a validation rejection coming back as data (`isError: true`, not a thrown exception), and `get_weather`. Run it with `npm run client` from the repo root, with the server already running.
+- **A detail from the monorepo split (historical):** since Stage `06-monorepo-server-client-split`, server and client are separate packages with separate `build/` output, so the client can no longer assume the server's compiled file is a sibling of wherever it's run from. It resolves the path itself, relative to its own file location:
   ```ts
   const serverEntry = path.resolve(here, '../../server/build/index.js');
   ```
   This makes the client correct regardless of the current working directory it's launched from — the same property a real client like Claude Desktop needs, since it launches your server from wherever *it* happens to run, not from inside this repo.
 - **Another detail, from `07-web-nextjs-react`:** this resolution moved from module load time into `connectToServer()` itself, and swapped `import.meta.dirname` for `path.dirname(fileURLToPath(import.meta.url))`. Next.js's build process imports this module (to collect page data) without necessarily calling `connectToServer()`, and in that import context — and again, separately, under Turbopack's externalized-module loader at runtime — `import.meta.dirname` came back `undefined`. Resolving lazily, inside the function, and via `import.meta.url` rather than the newer `dirname` shorthand, made it work in every context that imports this module, not just the ones that call it eagerly at the top.
+- **Since `08-server-http-transport`:** all of that path resolution is gone. `connectToServer(url?)` in [`connection.ts`](packages/client/src/connection.ts) uses the SDK's `StreamableHTTPClientTransport` and a URL (`MCP_SERVER_URL`, default `http://localhost:4768/mcp`) instead of spawning a process, so the client no longer needs to know where the server's build output lives — or even that it's on the same machine. That's what lets `web` be deployed separately from the server.
 - **Why it's worth doing:** it confirms the client/server relationship holds regardless of who's on the client end — a human clicking buttons, or a few lines of TypeScript. It's also a convenient scripted way to re-check every tool at once, without the Inspector's manual clicking.
 
 ## Web Dashboard
 
 A third client, alongside the Inspector and the scripted `client.ts`: a browser GUI that discovers the server's tools live and lets you run them by filling in a form — no editing code to try different input.
 
-**Status: built, on branch `07-web-nextjs-react`.** Like the client, this is a side exploration, not a numbered server stage. It started (in `06-monorepo-server-client-split`) as a plain Express server handing out one static HTML file with vanilla JS, talking to `@mcp-explorer/client` through two hand-rolled endpoints (`GET /api/tools`, `POST /api/call`). This branch rebuilds it as an actual Next.js + React app.
+**Status: built and merged (`07-web-nextjs-react`).** Like the client, this is a side exploration, not a numbered server stage. It started (in `06-monorepo-server-client-split`) as a plain Express server handing out one static HTML file with vanilla JS, talking to `@mcp-explorer/client` through two hand-rolled endpoints (`GET /api/tools`, `POST /api/call`). This branch rebuilds it as an actual Next.js + React app.
 
-- **What it does:** [`packages/web/src/app/page.tsx`](packages/web/src/app/page.tsx) is an async Server Component — it calls `getClient()` and `listTools()` directly, on the server, no REST hop in between. Each tool renders as a [`ToolCard`](packages/web/src/components/ToolCard.tsx) (a Client Component), which builds its input fields from the tool's live `inputSchema` and, on "Run", calls a **Server Action** — [`runTool()`](packages/web/src/app/actions.ts) — directly, the same way you'd call any other async function, no `fetch`/`JSON.stringify` in sight. Run it with `npm run web` (production build) or `npm run web:dev` (hot reload) from the repo root, at `http://localhost:4767`.
+- **What it does:** [`packages/web/src/app/page.tsx`](packages/web/src/app/page.tsx) is an async Server Component — it calls `getClient()` and `listTools()` directly, on the server, no REST hop in between. Each tool renders as a [`ToolCard`](packages/web/src/components/ToolCard.tsx) (a Client Component), which builds its input fields from the tool's live `inputSchema` and, on "Run", calls a **Server Action** — [`runTool()`](packages/web/src/app/actions.ts) — directly, the same way you'd call any other async function, no `fetch`/`JSON.stringify` in sight. Start the server first (`npm run start:http --workspace=packages/server`) — `web` connects to it via `MCP_SERVER_URL`. Run it with `npm run web` (production build) or `npm run web:dev` (hot reload) from the repo root, at `http://localhost:4767`.
 - **Why Server Components + Server Actions, not a REST port:** the old `/api/tools` and `/api/call` endpoints could have been ported to Next.js Route Handlers verbatim — smaller diff, same mental model. Building it the other way instead is the point: Server Components and Server Actions are what's actually different about Next.js, not just "Express with extra steps." No manual endpoints exist for the dashboard's own use at all.
-- **The connection is a singleton, again:** [`packages/web/src/lib/mcp-client.ts`](packages/web/src/lib/mcp-client.ts) caches the *in-flight promise* from `connectToServer()` on `globalThis`, not a module-level variable — the same server-spawning connection as the CLI client, reused across every request instead of reconnecting each time. `globalThis` specifically (not a plain `let`) because Next.js's dev-mode Fast Refresh re-evaluates a module's own scope on every edit; a module-level variable would reset and spawn a fresh server subprocess on each reload, while `globalThis` survives it. The promise (not the resolved client) is cached so two requests racing in before the first connection resolves don't each spawn their own subprocess.
-- **`page.tsx` is forced dynamic** (`export const dynamic = 'force-dynamic'`): without it, `next build` would statically prerender the route — which means actually executing the Server Component, and thus spawning the MCP server subprocess, at build time, then baking that one-time tool list into static HTML instead of fetching it fresh per request.
+- **The connection is a singleton, again:** [`packages/web/src/lib/mcp-client.ts`](packages/web/src/lib/mcp-client.ts) caches the *in-flight promise* from `connectToServer()` on `globalThis`, not a module-level variable — the same HTTP connection as the CLI client, reused across every request instead of reconnecting each time. `globalThis` specifically (not a plain `let`) because Next.js's dev-mode Fast Refresh re-evaluates a module's own scope on every edit; a module-level variable would reset and open a new connection on each reload, while `globalThis` survives it. The promise (not the resolved client) is cached so two requests racing in before the first connection resolves don't each open their own. (Before `08-server-http-transport` this connection spawned a server subprocess, which made the singleton matter more.)
+- **`page.tsx` is forced dynamic** (`export const dynamic = 'force-dynamic'`): without it, `next build` would statically prerender the route — which means actually executing the Server Component, and thus connecting to the MCP server, at build time, then baking that one-time tool list into static HTML instead of fetching it fresh per request.
