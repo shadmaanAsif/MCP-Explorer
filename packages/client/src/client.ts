@@ -4,7 +4,7 @@ import { connectToServer } from './connection.js';
 // It exists to see the other half of the protocol: the side that connects to
 // a running server and calls its tools, the same way Claude Desktop or the
 // Inspector do — just as plain code instead of a UI. Start the server first
-// (npm run start:http --workspace=packages/server).
+// (pnpm start:http).
 
 async function main() {
   const client = await connectToServer();
