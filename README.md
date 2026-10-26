@@ -24,7 +24,7 @@ Stage 1 is deliberately as small as a working MCP server can be: a server with a
 
 #### Folder structure
 
-Originally this was one flat package (one `package.json`, one `src/`, shared by both the server and the custom client). As of `06-monorepo-server-client-split`, server and client are **fully separate npm packages** in an npm-workspaces monorepo — each with its own `package.json` (so each declares only the dependencies it actually uses — the client never needed `zod`, for instance) and its own `build/` output:
+Originally this was one flat package (one `package.json`, one `src/`, shared by both the server and the custom client). As of `06-monorepo-server-client-split`, server and client are **fully separate packages** in a pnpm-workspaces monorepo (the repo moved from npm to pnpm in branch `09-switch-to-pnpm`) — each with its own `package.json` (so each declares only the dependencies it actually uses — the client never needed `zod`, for instance) and its own `build/` output:
 
 ```
 MCP-Explorer/
@@ -47,9 +47,9 @@ MCP-Explorer/
 
 Here's why each piece exists — nothing here is optional scaffolding:
 
-- **Root `package.json`** — declares the `workspaces` field (`packages/*`) so `npm install` at the root links both packages together and hoists shared dependencies into one `node_modules`. Its `scripts` just forward to the right package (`npm run build` builds both; `npm start` / `npm run client` each target one workspace), so the top-level commands you already know didn't change.
+- **`pnpm-workspace.yaml`** and root `package.json` — the workspace file lists `packages/*`, so `pnpm install` at the root links the packages together (`web` depends on the client as `workspace:*`). pnpm is strict: a package can only import what its own `package.json` declares, so nothing leaks in through hoisting. The root `package.json` pins `packageManager` and holds the scripts. Its `scripts` just forward to the right package (`pnpm build` builds both; `pnpm start` / `pnpm client` each target one workspace), so the top-level commands you already know didn't change.
 - **`tsconfig.base.json`** — the compiler options (`target`, `module`, `strict`, etc.) both packages need are identical, so they live once here instead of being copied twice. Each package's own `tsconfig.json` `extends` this and only adds its own `rootDir`/`outDir`.
-- **`packages/server/`** and **`packages/client/`** — each is a real, independent npm package: its own `package.json` (own name, own dependencies, own `build`/`start` scripts) and its own `src/` → `build/` pair. Splitting them this way means the client can never accidentally depend on something only the server needs (or vice versa) — the two halves of the protocol stay genuinely decoupled, not just organized into different folders of one package.
+- **`packages/server/`** and **`packages/client/`** — each is a real, independent package: its own `package.json` (own name, own dependencies, own `build`/`start` scripts) and its own `src/` → `build/` pair. Splitting them this way means the client can never accidentally depend on something only the server needs (or vice versa) — the two halves of the protocol stay genuinely decoupled, not just organized into different folders of one package.
 - **`.gitignore`** — keeps every `node_modules/` and `build/` (server's, client's, and the root's) out of version control. Neither belongs in git history; the pattern matches at any depth, so one `.gitignore` still covers both packages.
 
 Nothing else exists yet beyond this split — no shared internal package, no test framework. Those would be answers to problems this project doesn't have yet.
@@ -130,12 +130,12 @@ This is deliberately *not* Stage 4's job yet — no retries, no timeout, no part
 ### How to Run
 
 ```bash
-npm install
-npm run build
-npm start
+pnpm install
+pnpm build
+pnpm start
 ```
 
-`npm run build` compiles both packages (`packages/server/src/index.ts` → `packages/server/build/index.js`, and the client the same way); `npm start` runs the compiled server specifically. (There's also `npm run dev`, which just does both in one step.) These are root-level scripts that forward to the right workspace — you never need to `cd` into `packages/server` yourself.
+`pnpm build` compiles both packages (`packages/server/src/index.ts` → `packages/server/build/index.js`, and the client the same way); `pnpm start` runs the compiled server specifically. (There's also `pnpm dev`, which just does both in one step.) These are root-level scripts that forward to the right workspace — you never need to `cd` into `packages/server` yourself.
 
 On its own, the server will print `mcp-demo server running on stdio` to stderr and then just sit there — that's expected, not a hang. Keep reading to see why, and how to actually talk to it.
 
@@ -158,31 +158,31 @@ Two things worth knowing about what's actually happening:
 
 1. **Build the server** (from inside this project folder — the next command uses a relative path):
    ```bash
-   npm run build
+   pnpm build
    ```
 2. **Start the Inspector**, also from inside this folder:
    ```bash
-   npx @modelcontextprotocol/inspector node packages/server/build/index.js
+   pnpm dlx @modelcontextprotocol/inspector node packages/server/build/index.js
    ```
 3. It prints a URL with a security token, e.g. `http://localhost:6274/?MCP_PROXY_AUTH_TOKEN=<token>`. Open that exact URL. (The token just proves it's really you talking to your own local Inspector — it isn't part of MCP itself.)
 4. Confirm **Command** is `node` and **Arguments** is `packages/server/build/index.js`, then click **Connect**.
 5. The **Tools** tab fills in by itself with `add` — that's the Inspector automatically calling `tools/list` right after connecting.
 6. Click `add`, type numbers into `a` and `b`, click **Run Tool** — the sum comes back as the result.
 
-#### One instance per connection — not the same as `npm start`
+#### One instance per connection — not the same as `pnpm start`
 
-Every time you click **Connect**, the Inspector spawns a **brand-new copy** of your server — a separate running process from any `npm start` / `npm run dev` you might already have open elsewhere. Same code, but two independent instances that share nothing: nothing sent to one shows up in the other. If you're testing through the Inspector, the terminal running `npm start` isn't part of that loop at all — you can ignore it.
+Every time you click **Connect**, the Inspector spawns a **brand-new copy** of your server — a separate running process from any `pnpm start` / `pnpm dev` you might already have open elsewhere. Same code, but two independent instances that share nothing: nothing sent to one shows up in the other. If you're testing through the Inspector, the terminal running `pnpm start` isn't part of that loop at all — you can ignore it.
 
 #### What you actually need running
 
 To test a tool through the Inspector, this is the complete list — nothing else:
 
-1. **The server is built** — `npm run build` has run at least once (and again after any edit), so `packages/server/build/index.js` exists and is current.
-2. **The Inspector is running** — from inside this folder: `npx @modelcontextprotocol/inspector node packages/server/build/index.js`.
+1. **The server is built** — `pnpm build` has run at least once (and again after any edit), so `packages/server/build/index.js` exists and is current.
+2. **The Inspector is running** — from inside this folder: `pnpm dlx @modelcontextprotocol/inspector node packages/server/build/index.js`.
 3. **The token is copied and pasted** — when it starts, the Inspector prints a URL like `http://localhost:6274/?MCP_PROXY_AUTH_TOKEN=<token>`. Copy everything after `TOKEN=` and paste it into the Configuration panel's **Proxy Session Token** field. Command/Arguments should be `node` / `packages/server/build/index.js`.
 4. **You've clicked Connect.**
 
-Notice `npm start` / `npm run dev` isn't on that list. It's easy to assume "the server" needs to be running separately, but it doesn't — the Inspector builds nothing itself, but as long as `packages/server/build/index.js` already exists on disk, it's entirely self-sufficient.
+Notice `pnpm start` / `pnpm dev` isn't on that list. It's easy to assume "the server" needs to be running separately, but it doesn't — the Inspector builds nothing itself, but as long as `packages/server/build/index.js` already exists on disk, it's entirely self-sufficient.
 
 #### Where your own logs show up
 
@@ -192,7 +192,7 @@ The `add` handler logs each call:
 console.error(`[mcp-demo] add called with a=${a}, b=${b}`);
 ```
 
-This uses `console.error` (stderr), never `console.log` (stdout) — stdout is reserved for the JSON-RPC replies themselves, so anything else printed there would corrupt the protocol. The Inspector captures the spawned server's stderr and shows it inside its own UI — not in whatever terminal you happened to launch `npx @modelcontextprotocol/inspector` from.
+This uses `console.error` (stderr), never `console.log` (stdout) — stdout is reserved for the JSON-RPC replies themselves, so anything else printed there would corrupt the protocol. The Inspector captures the spawned server's stderr and shows it inside its own UI — not in whatever terminal you happened to launch `pnpm dlx @modelcontextprotocol/inspector` from.
 
 ### Connecting from a Real Client (Cursor)
 
@@ -212,7 +212,7 @@ Add this to Cursor's `mcp.json` (Cursor Settings → MCP, or `~/.cursor/mcp.json
 }
 ```
 
-- The path must point at `packages/server/build/index.js` (the compiled output), so `npm run build` needs to have run at least once — and again after any server change.
+- The path must point at `packages/server/build/index.js` (the compiled output), so `pnpm build` needs to have run at least once — and again after any server change.
 - `"type": "stdio"` matches exactly how the Inspector talks to it: Cursor launches this as a subprocess and exchanges JSON-RPC over its stdin/stdout.
 
 Restart Cursor (or reload its MCP servers) afterward, and `add`, `divide`, and `get_weather` show up as tools the assistant can call on its own.
@@ -221,8 +221,8 @@ Restart Cursor (or reload its MCP servers) afterward, and `add`, `divide`, and `
 
 Since `08-server-http-transport`, the tools live in [`create-server.ts`](packages/server/src/create-server.ts) as a `createServer()` factory, and there are two entry points that connect it to a transport:
 
-- [`index.ts`](packages/server/src/index.ts) — **stdio**. One `McpServer` for the life of the process, spawned by the client (Inspector, Cursor, etc.). `npm start --workspace=packages/server`.
-- [`http.ts`](packages/server/src/http.ts) — **Streamable HTTP**. A standalone process listening on `PORT` (default `4768`); `POST /mcp` handles requests in **stateless** mode (`sessionIdGenerator: undefined`), building a fresh `McpServer` per request. `npm run start:http --workspace=packages/server`.
+- [`index.ts`](packages/server/src/index.ts) — **stdio**. One `McpServer` for the life of the process, spawned by the client (Inspector, Cursor, etc.). `pnpm start`.
+- [`http.ts`](packages/server/src/http.ts) — **Streamable HTTP**. A standalone process listening on `PORT` (default `4768`); `POST /mcp` handles requests in **stateless** mode (`sessionIdGenerator: undefined`), building a fresh `McpServer` per request. `pnpm start:http`.
 
 Both serve identical tools — it's one server definition, two ways to run it. `@mcp-explorer/client` and the web dashboard connect over HTTP (`MCP_SERVER_URL`, default `http://localhost:4768/mcp`), so the server has to be running first. Stateless mode is enough while every tool is a single request/response; anything that pushes updates, remembers a client, or resumes needs **stateful** mode (an `Mcp-Session-Id` header plus a map of live sessions) — planned for Stage 4 below.
 
@@ -230,7 +230,7 @@ Both serve identical tools — it's one server definition, two ways to run it. `
 
 Every stage (and every side exploration) below gets its own git branch. The habit is: **branch → build → understand it → merge into `main` → branch again for the next thing.** Nothing moves to `main` until it's understood, not just working.
 
-> **Branch numbering:** starting from this point, every new branch — a numbered stage or a side exploration — also gets a global sequence number prefix (`NN-description`), so the branch list alone shows true creation order, not just which stages happen to be numbered. `stage-1-basic-server` and `explore-mcp-client` predate this convention (they'd be #1 and #2) and keep their original names. Branch #3 turned out to be a side exploration too (`03-claude-md-constitution`, adding `CLAUDE.md`) rather than Stage 2 — proof the counter really is global and doesn't reserve numbers for stages in advance. Stage 2 landed as `04-stage-2-second-tool-validation`, Stage 3 as `05-stage-3-real-data-source`, #6 was another side exploration (`06-monorepo-server-client-split`, splitting server/client into separate npm-workspace packages), and #7 (`07-web-nextjs-react`, rewriting the web dashboard as Next.js + React) followed it, and #8 (`08-server-http-transport`, adding a Streamable HTTP entry point to the server and moving the client onto it) came after that — anything after that gets whatever number comes next when it's actually created.
+> **Branch numbering:** starting from this point, every new branch — a numbered stage or a side exploration — also gets a global sequence number prefix (`NN-description`), so the branch list alone shows true creation order, not just which stages happen to be numbered. `stage-1-basic-server` and `explore-mcp-client` predate this convention (they'd be #1 and #2) and keep their original names. Branch #3 turned out to be a side exploration too (`03-claude-md-constitution`, adding `CLAUDE.md`) rather than Stage 2 — proof the counter really is global and doesn't reserve numbers for stages in advance. Stage 2 landed as `04-stage-2-second-tool-validation`, Stage 3 as `05-stage-3-real-data-source`, #6 was another side exploration (`06-monorepo-server-client-split`, splitting server/client into separate npm-workspace packages), and #7 (`07-web-nextjs-react`, rewriting the web dashboard as Next.js + React) followed it, and #8 (`08-server-http-transport`, adding a Streamable HTTP entry point to the server and moving the client onto it) came after that, and #9 (`09-switch-to-pnpm`, moving the repo from npm to pnpm) followed — anything after that gets whatever number comes next when it's actually created.
 
 ```mermaid
 flowchart LR
@@ -291,11 +291,11 @@ Stages 1–4 build the server; **Stages 5–11 are the enterprise track** — wh
     Dockerfile, environment-based config, a CI/CD pipeline to a real host, a gateway/reverse proxy (TLS, no SSE buffering), and a versioning and deprecation policy for tools. Goal: ship it, update it, and roll it back.
     Branch: `0N-stage-11-containerize-deploy`
 
-**Where we are:** Stages 1–3 are implemented and merged; Stage 4 hasn't started. Branches #6 (`06-monorepo-server-client-split`) and #7 (`07-web-nextjs-react`) are merged side explorations, and #8 (`08-server-http-transport`, this branch — stateless Streamable HTTP on the server, client and web moved onto it) is the current one, not a numbered stage. Stages 4–11 above are the plan, not a promise of exact detail.
+**Where we are:** Stages 1–3 are implemented and merged; Stage 4 hasn't started. Branches #6 (`06-monorepo-server-client-split`), #7 (`07-web-nextjs-react`) and #8 (`08-server-http-transport`, stateless Streamable HTTP on the server, client and web moved onto it) are merged side explorations, and #9 (`09-switch-to-pnpm`, this branch — moving the repo from npm to pnpm) is the current one, not a numbered stage. Stages 4–11 above are the plan, not a promise of exact detail.
 
 ### Next Steps
 
-1. Run `npm install && npm run build`, start the HTTP server (`npm run start:http --workspace=packages/server`), then confirm `add`, `divide`, and `get_weather` work through `npm run client` and `npm run web`; the Inspector still works over stdio against `packages/server/build/index.js`.
+1. Run `pnpm install && pnpm build`, start the HTTP server (`pnpm start:http`), then confirm `add`, `divide`, and `get_weather` work through `pnpm client` and `pnpm web`; the Inspector still works over stdio against `packages/server/build/index.js`.
 2. Once that makes sense, this branch is ready for a PR into `main`.
 3. Start Stage 4 (error handling, a real-time use case, stateful HTTP) on the next numbered branch afterward, inside `packages/server`.
 
@@ -307,7 +307,7 @@ Everything under **MCP Server** covers one half of the protocol: a program that 
 
 **Status: built, on `main`.** This isn't one of the four numbered server stages — it was a separate, parallel exploration (originally `explore-mcp-client`, merged via [#2](https://github.com/shadmaanAsif/MCP-Explorer/pull/2)) for understanding the client side of MCP, and it's kept up to date as the server grows.
 
-- **What it does:** [`packages/client/src/client.ts`](packages/client/src/client.ts) connects to the running HTTP server from code (no Inspector, no UI), calls `listTools()`, then `callTool()` against every current tool — `add(2, 3)`, `divide(10, 2)`, `divide(10, 0)` to show a validation rejection coming back as data (`isError: true`, not a thrown exception), and `get_weather`. Run it with `npm run client` from the repo root, with the server already running.
+- **What it does:** [`packages/client/src/client.ts`](packages/client/src/client.ts) connects to the running HTTP server from code (no Inspector, no UI), calls `listTools()`, then `callTool()` against every current tool — `add(2, 3)`, `divide(10, 2)`, `divide(10, 0)` to show a validation rejection coming back as data (`isError: true`, not a thrown exception), and `get_weather`. Run it with `pnpm client` from the repo root, with the server already running.
 - **A detail from the monorepo split (historical):** since Stage `06-monorepo-server-client-split`, server and client are separate packages with separate `build/` output, so the client can no longer assume the server's compiled file is a sibling of wherever it's run from. It resolves the path itself, relative to its own file location:
   ```ts
   const serverEntry = path.resolve(here, '../../server/build/index.js');
@@ -323,7 +323,7 @@ A third client, alongside the Inspector and the scripted `client.ts`: a browser 
 
 **Status: built and merged (`07-web-nextjs-react`).** Like the client, this is a side exploration, not a numbered server stage. It started (in `06-monorepo-server-client-split`) as a plain Express server handing out one static HTML file with vanilla JS, talking to `@mcp-explorer/client` through two hand-rolled endpoints (`GET /api/tools`, `POST /api/call`). This branch rebuilds it as an actual Next.js + React app.
 
-- **What it does:** [`packages/web/src/app/page.tsx`](packages/web/src/app/page.tsx) is an async Server Component — it calls `getClient()` and `listTools()` directly, on the server, no REST hop in between. Each tool renders as a [`ToolCard`](packages/web/src/components/ToolCard.tsx) (a Client Component), which builds its input fields from the tool's live `inputSchema` and, on "Run", calls a **Server Action** — [`runTool()`](packages/web/src/app/actions.ts) — directly, the same way you'd call any other async function, no `fetch`/`JSON.stringify` in sight. Start the server first (`npm run start:http --workspace=packages/server`) — `web` connects to it via `MCP_SERVER_URL`. Run it with `npm run web` (production build) or `npm run web:dev` (hot reload) from the repo root, at `http://localhost:4767`.
+- **What it does:** [`packages/web/src/app/page.tsx`](packages/web/src/app/page.tsx) is an async Server Component — it calls `getClient()` and `listTools()` directly, on the server, no REST hop in between. Each tool renders as a [`ToolCard`](packages/web/src/components/ToolCard.tsx) (a Client Component), which builds its input fields from the tool's live `inputSchema` and, on "Run", calls a **Server Action** — [`runTool()`](packages/web/src/app/actions.ts) — directly, the same way you'd call any other async function, no `fetch`/`JSON.stringify` in sight. Start the server first (`pnpm start:http`) — `web` connects to it via `MCP_SERVER_URL`. Run it with `pnpm web` (production build) or `pnpm web:dev` (hot reload) from the repo root, at `http://localhost:4767`.
 - **Why Server Components + Server Actions, not a REST port:** the old `/api/tools` and `/api/call` endpoints could have been ported to Next.js Route Handlers verbatim — smaller diff, same mental model. Building it the other way instead is the point: Server Components and Server Actions are what's actually different about Next.js, not just "Express with extra steps." No manual endpoints exist for the dashboard's own use at all.
 - **The connection is a singleton, again:** [`packages/web/src/lib/mcp-client.ts`](packages/web/src/lib/mcp-client.ts) caches the *in-flight promise* from `connectToServer()` on `globalThis`, not a module-level variable — the same HTTP connection as the CLI client, reused across every request instead of reconnecting each time. `globalThis` specifically (not a plain `let`) because Next.js's dev-mode Fast Refresh re-evaluates a module's own scope on every edit; a module-level variable would reset and open a new connection on each reload, while `globalThis` survives it. The promise (not the resolved client) is cached so two requests racing in before the first connection resolves don't each open their own. (Before `08-server-http-transport` this connection spawned a server subprocess, which made the singleton matter more.)
 - **`page.tsx` is forced dynamic** (`export const dynamic = 'force-dynamic'`): without it, `next build` would statically prerender the route — which means actually executing the Server Component, and thus connecting to the MCP server, at build time, then baking that one-time tool list into static HTML instead of fetching it fresh per request.
