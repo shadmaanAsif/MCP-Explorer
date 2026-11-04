@@ -1,13 +1,124 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
+// --- get_weather: talking to Open-Meteo without trusting it -----------------
+// The upstream API can be slow, down, or reply with something unexpected, and
+// none of that should hang the tool call or crash the server. Every failure
+// below becomes a normal `isError: true` tool result with its own message.
+// OPEN_METEO_URL exists so the failure paths can be exercised against a local
+// stub server; it defaults to the real API.
+const OPEN_METEO_URL = process.env.OPEN_METEO_URL ?? 'https://api.open-meteo.com/v1/forecast';
+const FETCH_TIMEOUT_MS = 8000;
+const MAX_RETRIES = 2;
+const RETRY_BASE_DELAY_MS = 300;
+
+// Validates the reply instead of trusting its shape: if Open-Meteo changes
+// its format (or a proxy returns an HTML error page), we want a clear error,
+// not a TypeError from reading `data.current.temperature_2m` on undefined.
+const weatherResponseSchema = z.object({
+  current: z.object({ temperature_2m: z.number(), wind_speed_10m: z.number() }),
+  current_units: z.object({ temperature_2m: z.string(), wind_speed_10m: z.string() })
+});
+
+type WeatherResult = { ok: true; text: string } | { ok: false; message: string };
+
+// Resolves after `ms`, or immediately if the caller cancels while we wait.
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true }
+    );
+  });
+}
+
+// `callerSignal` is the MCP request's own signal: it fires when the client
+// cancels the call, so we stop hitting the upstream API on their behalf.
+async function fetchWeather(latitude: number, longitude: number, callerSignal: AbortSignal): Promise<WeatherResult> {
+  const url = `${OPEN_METEO_URL}?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,wind_speed_10m`;
+  let lastFailure = '';
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (callerSignal.aborted) return { ok: false, message: 'Weather request was cancelled' };
+
+    // Each attempt gets its own timeout; the caller's signal is combined in so
+    // either one aborts the request. This uses an AbortController + setTimeout
+    // rather than AbortSignal.timeout(): on Node 20, a timeout signal that is
+    // only referenced through AbortSignal.any() can be garbage-collected
+    // before it fires, which left a hung upstream hanging the tool forever.
+    const timeoutController = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      timeoutController.abort();
+    }, FETCH_TIMEOUT_MS);
+
+    try {
+      const signal = AbortSignal.any([callerSignal, timeoutController.signal]);
+      const response = await fetch(url, { signal });
+
+      if (response.ok) {
+        // Bad data is not retried: asking again won't change the shape.
+        let body: unknown;
+        try {
+          body = await response.json();
+        } catch {
+          return { ok: false, message: 'Open-Meteo returned a response that was not valid JSON' };
+        }
+        const parsed = weatherResponseSchema.safeParse(body);
+        if (!parsed.success) {
+          return { ok: false, message: 'Open-Meteo returned an unexpected response shape (missing current weather fields)' };
+        }
+        const { current, current_units } = parsed.data;
+        return {
+          ok: true,
+          text: `${current.temperature_2m}${current_units.temperature_2m}, wind ${current.wind_speed_10m} ${current_units.wind_speed_10m}`
+        };
+      }
+
+      // 4xx means our request was wrong — retrying can't fix it. 5xx means
+      // their side is struggling — worth another try.
+      const failure = `Open-Meteo returned ${response.status} ${response.statusText}`;
+      if (response.status < 500) return { ok: false, message: failure };
+      lastFailure = failure;
+    } catch (error) {
+      if (callerSignal.aborted) return { ok: false, message: 'Weather request was cancelled' };
+      lastFailure = timedOut
+        ? `Open-Meteo did not respond within ${FETCH_TIMEOUT_MS / 1000}s`
+        : `Failed to reach Open-Meteo: ${(error as Error).message}`;
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (attempt < MAX_RETRIES) {
+      const delay = RETRY_BASE_DELAY_MS * 2 ** attempt;
+      console.error(`[mcp-demo] get_weather attempt ${attempt + 1} failed (${lastFailure}); retrying in ${delay}ms`);
+      await sleep(delay, callerSignal);
+    }
+  }
+
+  return { ok: false, message: `${lastFailure} (gave up after ${MAX_RETRIES + 1} attempts)` };
+}
+
 // Built by a factory (not a module-level singleton) so each transport can get
 // its own instance: the stdio entry builds one, the stateless HTTP entry
 // builds a fresh one per request.
 // The server is the thing an MCP client (like Claude Desktop, Claude Code,
 // or the MCP Inspector) connects to. Giving it a name/version is how it
 // identifies itself during the initial handshake.
-export function createServer(): McpServer {
+//
+// `session` is state that lives as long as the caller's session. stdio (one
+// process per client) and stateful HTTP keep one for the whole connection;
+// stateless HTTP builds a fresh one per request, so state set in one call is
+// gone by the next.
+export type SessionState = { home?: { name: string; latitude: number; longitude: number } };
+
+export function createServer(session: SessionState = {}): McpServer {
   const server = new McpServer({
     name: 'mcp-demo',
     version: '0.1.0'
@@ -85,36 +196,115 @@ export function createServer(): McpServer {
         longitude: z.number().min(-180).max(180).describe('Longitude in decimal degrees')
       }
     },
-    async ({ latitude, longitude }) => {
+    async ({ latitude, longitude }, extra) => {
       console.error(`[mcp-demo] get_weather called with latitude=${latitude}, longitude=${longitude}`);
-      const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,wind_speed_10m`;
-      try {
-        const response = await fetch(url);
-        if (!response.ok) {
-          return {
-            isError: true,
-            content: [{ type: 'text', text: `Open-Meteo returned ${response.status} ${response.statusText}` }]
-          };
+      const result = await fetchWeather(latitude, longitude, extra.signal);
+      if (!result.ok) {
+        return { isError: true, content: [{ type: 'text', text: result.message }] };
+      }
+      return { content: [{ type: 'text', text: result.text }] };
+    }
+  );
+
+  // Stage 4's progress tool. A batch can take a while (each location may
+  // retry), so after every location the handler tells the client how far it
+  // got. The client opts in by sending a progressToken with the call; with no
+  // token we stay silent. Locations run one after another, not in parallel,
+  // so "2 of 5" means something. The cap keeps the worst case (~25s per
+  // location when the upstream hangs) within reach of a progress-reset timeout.
+  server.registerTool(
+    'get_weather_batch',
+    {
+      title: 'Get current weather for several places',
+      description: 'Fetches current weather for up to 5 named locations, reporting progress after each one.',
+      inputSchema: {
+        locations: z
+          .array(
+            z.object({
+              name: z.string().describe('A label for the place, used in the results'),
+              latitude: z.number().min(-90).max(90),
+              longitude: z.number().min(-180).max(180)
+            })
+          )
+          .min(1)
+          .max(5)
+      }
+    },
+    async ({ locations }, extra) => {
+      console.error(`[mcp-demo] get_weather_batch called with ${locations.length} locations`);
+      const progressToken = extra._meta?.progressToken;
+      const lines: string[] = [];
+      let failures = 0;
+
+      for (const [index, location] of locations.entries()) {
+        const result = await fetchWeather(location.latitude, location.longitude, extra.signal);
+        // One failing location is reported in the output; it doesn't fail the batch.
+        if (result.ok) {
+          lines.push(`${location.name}: ${result.text}`);
+        } else {
+          failures++;
+          lines.push(`${location.name}: ERROR - ${result.message}`);
         }
-        const data = await response.json();
-        const { temperature_2m, wind_speed_10m } = data.current;
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `${temperature_2m}${data.current_units.temperature_2m}, wind ${wind_speed_10m} ${data.current_units.wind_speed_10m}`
+
+        if (progressToken !== undefined) {
+          await extra.sendNotification({
+            method: 'notifications/progress',
+            params: {
+              progressToken,
+              progress: index + 1,
+              total: locations.length,
+              message: `${location.name} done`
             }
-          ]
-        };
-      } catch (error) {
-        // Network failure, DNS error, etc. — the request never got a response
-        // at all. Caught here so a flaky network turns into a normal tool
-        // error result, not an unhandled rejection that takes the server down.
+          });
+        }
+      }
+
+      return {
+        // Only an error when nothing worked; partial success is still a result.
+        isError: failures === locations.length,
+        content: [{ type: 'text', text: lines.join('\n') }]
+      };
+    }
+  );
+
+  server.registerTool(
+    'set_home_location',
+    {
+      title: 'Remember a home location',
+      description:
+        'Stores a home location for this session so get_home_weather needs no arguments. ' +
+        'Only persists across calls when the server runs in stateful mode.',
+      inputSchema: {
+        name: z.string().describe('A label for the place'),
+        latitude: z.number().min(-90).max(90),
+        longitude: z.number().min(-180).max(180)
+      }
+    },
+    async ({ name, latitude, longitude }) => {
+      console.error(`[mcp-demo] set_home_location: ${name} (${latitude}, ${longitude})`);
+      session.home = { name, latitude, longitude };
+      return { content: [{ type: 'text', text: `Home location set to ${name}` }] };
+    }
+  );
+
+  server.registerTool(
+    'get_home_weather',
+    {
+      title: 'Get weather for the remembered home location',
+      description: 'Fetches current weather for the location saved by set_home_location in this session.',
+      inputSchema: {}
+    },
+    async (_args, extra) => {
+      const home = session.home;
+      if (!home) {
         return {
           isError: true,
-          content: [{ type: 'text', text: `Failed to reach Open-Meteo: ${(error as Error).message}` }]
+          content: [{ type: 'text', text: 'No home location set in this session. Call set_home_location first.' }]
         };
       }
+      const result = await fetchWeather(home.latitude, home.longitude, extra.signal);
+      if (!result.ok) return { isError: true, content: [{ type: 'text', text: result.message }] };
+      return { content: [{ type: 'text', text: `${home.name}: ${result.text}` }] };
     }
   );
 
