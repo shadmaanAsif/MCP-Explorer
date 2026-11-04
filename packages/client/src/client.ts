@@ -51,6 +51,30 @@ async function main() {
   });
   console.log('Result of get_weather(52.52, 13.41):', weatherResult.content);
 
+  // get_weather_batch reports progress while it works. Passing `onprogress`
+  // makes the SDK attach a progressToken to the call, which is what tells the
+  // server to send notifications/progress. `resetTimeoutOnProgress` restarts
+  // the request timeout on every update, so a long batch that keeps making
+  // progress isn't killed by the 60s default.
+  const batchResult = await client.callTool(
+    {
+      name: 'get_weather_batch',
+      arguments: {
+        locations: [
+          { name: 'Berlin', latitude: 52.52, longitude: 13.41 },
+          { name: 'London', latitude: 51.51, longitude: -0.13 },
+          { name: 'Tokyo', latitude: 35.68, longitude: 139.69 }
+        ]
+      }
+    },
+    undefined,
+    {
+      onprogress: ({ progress, total, message }) => console.log(`  progress ${progress}/${total}: ${message}`),
+      resetTimeoutOnProgress: true
+    }
+  );
+  console.log('Result of get_weather_batch:', batchResult.content);
+
   await client.close();
 }
 

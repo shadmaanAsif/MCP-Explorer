@@ -199,5 +199,66 @@ export function createServer(): McpServer {
     }
   );
 
+  // Stage 4's progress tool. A batch can take a while (each location may
+  // retry), so after every location the handler tells the client how far it
+  // got. The client opts in by sending a progressToken with the call; with no
+  // token we stay silent. Locations run one after another, not in parallel,
+  // so "2 of 5" means something. The cap keeps the worst case (~25s per
+  // location when the upstream hangs) within reach of a progress-reset timeout.
+  server.registerTool(
+    'get_weather_batch',
+    {
+      title: 'Get current weather for several places',
+      description: 'Fetches current weather for up to 5 named locations, reporting progress after each one.',
+      inputSchema: {
+        locations: z
+          .array(
+            z.object({
+              name: z.string().describe('A label for the place, used in the results'),
+              latitude: z.number().min(-90).max(90),
+              longitude: z.number().min(-180).max(180)
+            })
+          )
+          .min(1)
+          .max(5)
+      }
+    },
+    async ({ locations }, extra) => {
+      console.error(`[mcp-demo] get_weather_batch called with ${locations.length} locations`);
+      const progressToken = extra._meta?.progressToken;
+      const lines: string[] = [];
+      let failures = 0;
+
+      for (const [index, location] of locations.entries()) {
+        const result = await fetchWeather(location.latitude, location.longitude, extra.signal);
+        // One failing location is reported in the output; it doesn't fail the batch.
+        if (result.ok) {
+          lines.push(`${location.name}: ${result.text}`);
+        } else {
+          failures++;
+          lines.push(`${location.name}: ERROR - ${result.message}`);
+        }
+
+        if (progressToken !== undefined) {
+          await extra.sendNotification({
+            method: 'notifications/progress',
+            params: {
+              progressToken,
+              progress: index + 1,
+              total: locations.length,
+              message: `${location.name} done`
+            }
+          });
+        }
+      }
+
+      return {
+        // Only an error when nothing worked; partial success is still a result.
+        isError: failures === locations.length,
+        content: [{ type: 'text', text: lines.join('\n') }]
+      };
+    }
+  );
+
   return server;
 }
