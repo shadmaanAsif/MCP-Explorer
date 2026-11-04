@@ -111,7 +111,14 @@ async function fetchWeather(latitude: number, longitude: number, callerSignal: A
 // The server is the thing an MCP client (like Claude Desktop, Claude Code,
 // or the MCP Inspector) connects to. Giving it a name/version is how it
 // identifies itself during the initial handshake.
-export function createServer(): McpServer {
+//
+// `session` is state that lives as long as the caller's session. stdio (one
+// process per client) and stateful HTTP keep one for the whole connection;
+// stateless HTTP builds a fresh one per request, so state set in one call is
+// gone by the next.
+export type SessionState = { home?: { name: string; latitude: number; longitude: number } };
+
+export function createServer(session: SessionState = {}): McpServer {
   const server = new McpServer({
     name: 'mcp-demo',
     version: '0.1.0'
@@ -257,6 +264,47 @@ export function createServer(): McpServer {
         isError: failures === locations.length,
         content: [{ type: 'text', text: lines.join('\n') }]
       };
+    }
+  );
+
+  server.registerTool(
+    'set_home_location',
+    {
+      title: 'Remember a home location',
+      description:
+        'Stores a home location for this session so get_home_weather needs no arguments. ' +
+        'Only persists across calls when the server runs in stateful mode.',
+      inputSchema: {
+        name: z.string().describe('A label for the place'),
+        latitude: z.number().min(-90).max(90),
+        longitude: z.number().min(-180).max(180)
+      }
+    },
+    async ({ name, latitude, longitude }) => {
+      console.error(`[mcp-demo] set_home_location: ${name} (${latitude}, ${longitude})`);
+      session.home = { name, latitude, longitude };
+      return { content: [{ type: 'text', text: `Home location set to ${name}` }] };
+    }
+  );
+
+  server.registerTool(
+    'get_home_weather',
+    {
+      title: 'Get weather for the remembered home location',
+      description: 'Fetches current weather for the location saved by set_home_location in this session.',
+      inputSchema: {}
+    },
+    async (_args, extra) => {
+      const home = session.home;
+      if (!home) {
+        return {
+          isError: true,
+          content: [{ type: 'text', text: 'No home location set in this session. Call set_home_location first.' }]
+        };
+      }
+      const result = await fetchWeather(home.latitude, home.longitude, extra.signal);
+      if (!result.ok) return { isError: true, content: [{ type: 'text', text: result.message }] };
+      return { content: [{ type: 'text', text: `${home.name}: ${result.text}` }] };
     }
   );
 
