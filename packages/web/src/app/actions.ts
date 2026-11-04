@@ -1,6 +1,7 @@
 'use server';
 
 import { withClient } from '@/lib/mcp-client';
+import { startCall, finishCall } from '@/lib/in-flight';
 
 export type RunToolResult = {
   content: unknown;
@@ -14,9 +15,25 @@ export type RunToolResult = {
 // a `[x: string]: unknown` index signature, which widens named properties
 // like `isError` to `unknown` once inferred back on the client side of the
 // action boundary.
-export async function runTool(name: string, args: Record<string, unknown>): Promise<RunToolResult> {
-  return withClient(async (client) => {
-    const result = await client.callTool({ name, arguments: args });
-    return { content: result.content, isError: result.isError === true };
-  });
+export async function runTool(
+  name: string,
+  args: Record<string, unknown>,
+  callId: string
+): Promise<RunToolResult> {
+  const controller = startCall(callId);
+  try {
+    return await withClient(async (client) => {
+      const result = await client.callTool({ name, arguments: args }, undefined, {
+        signal: controller.signal
+      });
+      return { content: result.content, isError: result.isError === true };
+    });
+  } catch (err) {
+    if (controller.signal.aborted) {
+      return { content: [{ type: 'text', text: 'Cancelled' }], isError: true };
+    }
+    throw err;
+  } finally {
+    finishCall(callId);
+  }
 }

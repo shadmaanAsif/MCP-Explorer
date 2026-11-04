@@ -74,7 +74,7 @@ Now split per-package, matching what each half of the protocol actually needs:
 
 That's the whole mental model for Stage 1: **server → tool → transport**. Everything MCP does at a larger scale is built from these same three pieces.
 
-### Stage 2 — Second tool + input validation *(this branch)*
+### Stage 2 — Second tool + input validation *(on `main`)*
 
 Stage 2 adds one more tool, `divide`, specifically to show what validation looks like once "wrong type" isn't the only way a call can be bad.
 
@@ -125,7 +125,46 @@ if (!response.ok) {
 
 The `try`/`catch` around the `fetch` catches network failure (DNS, unreachable host) the same way `divide`'s `.refine()` catches bad input — as a normal `isError: true` result, not a crash. Verified both paths directly: a real call against Open-Meteo, and a call against a deliberately unreachable host, which returned `Failed to reach Open-Meteo: fetch failed` instead of an unhandled rejection.
 
-This is deliberately *not* Stage 4's job yet — no retries, no timeout, no partial-data handling. Just: don't let the process die when the network doesn't cooperate.
+Stage 3 deliberately stopped there — no retries, no timeout, no partial-data handling. Just: don't let the process die when the network doesn't cooperate. Stage 4 (next section) adds those.
+
+### Stage 4 — Error handling, progress & stateful HTTP *(on `main`)*
+
+Built across branches #10 (`10-stage-4-error-handling-realtime`), #11 (`11-stage-4-wrapup`, dashboard reconnect) and #12 (`12-stage-4-verify-docs`, verification and these docs). Three parts:
+
+**1. Error handling in `get_weather`** ([`fetchWeather()`](packages/server/src/create-server.ts))
+- 8s timeout per attempt, up to 3 attempts, backoff 300ms then 600ms.
+- Retries only on 5xx, timeout and network errors. A 4xx, invalid JSON or an unexpected response shape returns an error straight away — retrying cannot fix those.
+- Final message ends with `(gave up after 3 attempts)`. Worst case against a hung upstream is about 25s.
+- `OPEN_METEO_URL` overrides the API address so the failure paths can be tested against a local stub.
+- The caller's cancel signal (`extra.signal`) aborts the in-flight `fetch` and stops the retry loop.
+
+**2. Progress: `get_weather_batch(locations)`**
+- 1 to 5 named locations, fetched one at a time with `fetchWeather`. After each one it sends `notifications/progress`, but only if the client asked (sent a progress token — `onprogress` in the client SDK; `packages/client` also sets `resetTimeoutOnProgress`).
+- One failing location shows as `ERROR - …` in the output without failing the batch. The call is an error only if every location failed.
+- Progress works in **both** HTTP modes: updates stream back on the same POST that made the call. (An earlier version of these docs said it needed stateful mode. That was wrong.)
+
+**3. Stateful Streamable HTTP** ([`http.ts`](packages/server/src/http.ts))
+- `MCP_MODE=stateful|stateless` (default `stateful`). `PORT` and `MCP_SESSION_TTL_MS` (idle timeout, default 30 minutes) also apply.
+- `handleStateful` routes by the `Mcp-Session-Id` header: a known id goes to that session's transport, an unknown id gets 404, a missing id on anything but `initialize` gets 400. `createSession` builds one `McpServer` and transport per client and stores them in the `sessions` Map. `sweepIdleSessions` closes idle sessions and shutdown closes all of them.
+- Per-session state lives in a `SessionState` object passed to `createServer(session)`. The tools `set_home_location` and `get_home_weather` use it.
+- Sessions are in memory only: a server restart forgets them, and the next request with an old id gets 404.
+
+| | stateless | stateful (default) |
+|---|---|---|
+| `McpServer` | new per POST, discarded after | one per session, kept in the `sessions` Map |
+| Remembers a client | no | yes (`SessionState`) |
+| Client cancel reaches a running call | no | yes |
+| Scales behind a load balancer | any instance can answer | needs sticky routing or a shared store |
+
+**Verified, not assumed** (against a stub upstream that accepts a request and never answers; the client aborts at 2s and stays connected):
+- stateless: upstream connection closes at 8.0s (the server's own timeout) and a retry follows at 8.3s — the cancel never arrived, because it is a separate POST handled by a fresh `McpServer` that has no record of the call.
+- stateful: upstream connection closes at 2.0s with no retry — the cancel reached the running handler.
+- idle sweep (TTL 4s): an idle session was closed and its old id then returned 404, while a session that kept making requests survived.
+
+**Dashboard changes that came with it**
+- Array and object arguments (such as `locations`) get a JSON textarea.
+- `withClient()` in [`mcp-client.ts`](packages/web/src/lib/mcp-client.ts): on a 404 it drops the cached client, reconnects (new session) and retries once, for both tool runs and the page's `listTools()`.
+- A Cancel button while a call runs. It posts to `/api/cancel` (a route handler, not a Server Action, because Server Actions from the browser run one at a time and a cancel would queue behind the call it targets) and aborts that call's `AbortController`, which the SDK turns into a cancel message. It only stops server work in stateful mode.
 
 ### How to Run
 
@@ -222,15 +261,15 @@ Restart Cursor (or reload its MCP servers) afterward, and `add`, `divide`, and `
 Since `08-server-http-transport`, the tools live in [`create-server.ts`](packages/server/src/create-server.ts) as a `createServer()` factory, and there are two entry points that connect it to a transport:
 
 - [`index.ts`](packages/server/src/index.ts) — **stdio**. One `McpServer` for the life of the process, spawned by the client (Inspector, Cursor, etc.). `pnpm start`.
-- [`http.ts`](packages/server/src/http.ts) — **Streamable HTTP**. A standalone process listening on `PORT` (default `4768`); `POST /mcp` handles requests in **stateless** mode (`sessionIdGenerator: undefined`), building a fresh `McpServer` per request. `pnpm start:http`.
+- [`http.ts`](packages/server/src/http.ts) — **Streamable HTTP**. A standalone process listening on `PORT` (default `4768`). In **stateful** mode (default) it keeps one `McpServer` per `Mcp-Session-Id`; with `MCP_MODE=stateless` (`sessionIdGenerator: undefined`) `POST /mcp` builds a fresh `McpServer` per request. `pnpm start:http`.
 
-Both serve identical tools — it's one server definition, two ways to run it. `@mcp-explorer/client` and the web dashboard connect over HTTP (`MCP_SERVER_URL`, default `http://localhost:4768/mcp`), so the server has to be running first. Stateless mode is enough while every tool is a single request/response; anything that pushes updates, remembers a client, or resumes needs **stateful** mode (an `Mcp-Session-Id` header plus a map of live sessions) — planned for Stage 4 below.
+Both serve identical tools — it's one server definition, two ways to run it. `@mcp-explorer/client` and the web dashboard connect over HTTP (`MCP_SERVER_URL`, default `http://localhost:4768/mcp`), so the server has to be running first. `MCP_MODE=stateful` (default) keeps one server per client, keyed by an `Mcp-Session-Id` header; `MCP_MODE=stateless` builds a fresh one per request. Stateless is enough for single request/response tools, and progress works in both; remembering a client and delivering a client's cancel to a running call need stateful. Details in Stage 4 above.
 
 ### Roadmap
 
 Every stage (and every side exploration) below gets its own git branch. The habit is: **branch → build → understand it → merge into `main` → branch again for the next thing.** Nothing moves to `main` until it's understood, not just working.
 
-> **Branch numbering:** starting from this point, every new branch — a numbered stage or a side exploration — also gets a global sequence number prefix (`NN-description`), so the branch list alone shows true creation order, not just which stages happen to be numbered. `stage-1-basic-server` and `explore-mcp-client` predate this convention (they'd be #1 and #2) and keep their original names. Branch #3 turned out to be a side exploration too (`03-claude-md-constitution`, adding `CLAUDE.md`) rather than Stage 2 — proof the counter really is global and doesn't reserve numbers for stages in advance. Stage 2 landed as `04-stage-2-second-tool-validation`, Stage 3 as `05-stage-3-real-data-source`, #6 was another side exploration (`06-monorepo-server-client-split`, splitting server/client into separate npm-workspace packages), and #7 (`07-web-nextjs-react`, rewriting the web dashboard as Next.js + React) followed it, and #8 (`08-server-http-transport`, adding a Streamable HTTP entry point to the server and moving the client onto it) came after that, and #9 (`09-switch-to-pnpm`, moving the repo from npm to pnpm) followed — anything after that gets whatever number comes next when it's actually created.
+> **Branch numbering:** starting from this point, every new branch — a numbered stage or a side exploration — also gets a global sequence number prefix (`NN-description`), so the branch list alone shows true creation order, not just which stages happen to be numbered. `stage-1-basic-server` and `explore-mcp-client` predate this convention (they'd be #1 and #2) and keep their original names. Branch #3 turned out to be a side exploration too (`03-claude-md-constitution`, adding `CLAUDE.md`) rather than Stage 2 — proof the counter really is global and doesn't reserve numbers for stages in advance. Stage 2 landed as `04-stage-2-second-tool-validation`, Stage 3 as `05-stage-3-real-data-source`, #6 was another side exploration (`06-monorepo-server-client-split`, splitting server/client into separate npm-workspace packages), and #7 (`07-web-nextjs-react`, rewriting the web dashboard as Next.js + React) followed it, and #8 (`08-server-http-transport`, adding a Streamable HTTP entry point to the server and moving the client onto it) came after that, and #9 (`09-switch-to-pnpm`, moving the repo from npm to pnpm) followed. Stage 4 landed as #10 (`10-stage-4-error-handling-realtime`), with #11 (`11-stage-4-wrapup`, dashboard reconnect after a server restart) and #12 (`12-stage-4-verify-docs`, verification, web cancel and these docs) finishing it — anything after that gets whatever number comes next when it's actually created.
 
 ```mermaid
 flowchart LR
@@ -259,9 +298,9 @@ Stages 1–4 build the server; **Stages 5–11 are the enterprise track** — wh
    Swap a toy tool for one that does real (async) work — calling a public API or reading real data. Goal: handle async operations and things that can be slow or unavailable.
    Branch: `05-stage-3-real-data-source`
 
-4. **Stage 4 — Error handling, a real-time use case & stateful HTTP**
-   Harden the server against failures (bad responses, timeouts, partial data) and add something closer to a genuine use case: a tool that pushes progress to the client while it runs. That needs **stateful Streamable HTTP** — an `Mcp-Session-Id` issued on `initialize`, a map of live sessions, one `McpServer` per session, and `GET`/`DELETE` on `/mcp` alongside `POST`. Goal: go from "it works when everything goes right" to "it behaves sensibly when it doesn't," and see why sessions exist at all.
-   Branch: `0N-stage-4-error-handling-realtime` *(number assigned when created)*
+4. **Stage 4 — Error handling, a real-time use case & stateful HTTP** *(on `main`)*
+   Harden the server against failures (bad responses, timeouts, partial data), add a tool that reports progress while it runs, and add **stateful Streamable HTTP** — an `Mcp-Session-Id` issued on `initialize`, a map of live sessions, one `McpServer` per session. Goal: go from "it works when everything goes right" to "it behaves sensibly when it doesn't," and see why sessions exist at all. Built as described in the Stage 4 section above.
+   Branches: `10-stage-4-error-handling-realtime`, `11-stage-4-wrapup`, `12-stage-4-verify-docs`
 
 5. **Stage 5 — Resources, prompts & completions**
    Tools are one of three server primitives. Add **resources** (read-only data a client can attach, addressed by URI) and **prompts** (reusable templates the user picks), plus argument completion. Goal: know which primitive fits which job instead of making everything a tool.
@@ -291,15 +330,13 @@ Stages 1–4 build the server; **Stages 5–11 are the enterprise track** — wh
     Dockerfile, environment-based config, a CI/CD pipeline to a real host, a gateway/reverse proxy (TLS, no SSE buffering), and a versioning and deprecation policy for tools. Goal: ship it, update it, and roll it back.
     Branch: `0N-stage-11-containerize-deploy`
 
-**Where we are:** Stages 1–3 are implemented and merged; Stage 4 hasn't started. Branches #6 (`06-monorepo-server-client-split`), #7 (`07-web-nextjs-react`) and #8 (`08-server-http-transport`, stateless Streamable HTTP on the server, client and web moved onto it) are merged side explorations, and #9 (`09-switch-to-pnpm`, this branch — moving the repo from npm to pnpm) is the current one, not a numbered stage. Stages 4–11 above are the plan, not a promise of exact detail.
+**Where we are:** Stages 1–4 are implemented and merged. Branches #6 (`06-monorepo-server-client-split`), #7 (`07-web-nextjs-react`), #8 (`08-server-http-transport`) and #9 (`09-switch-to-pnpm`) are merged side explorations. Stage 4 was #10 and #11, and #12 (`12-stage-4-verify-docs`, this branch) closes it out with the verification, the dashboard Cancel button and these docs. Stages 5–11 above are the plan, not a promise of exact detail.
 
 ### Next Steps
 
-1. Run `pnpm install && pnpm build`, start the HTTP server (`pnpm start:http`), then confirm `add`, `divide`, and `get_weather` work through `pnpm client` and `pnpm web`; the Inspector still works over stdio against `packages/server/build/index.js`.
+1. Run `pnpm install && pnpm build`, start the HTTP server (`pnpm start:http`), then confirm the tools work through `pnpm client` and `pnpm web`; the Inspector still works over stdio against `packages/server/build/index.js`.
 2. Once that makes sense, this branch is ready for a PR into `main`.
-3. Start Stage 4 (error handling, a real-time use case, stateful HTTP) on the next numbered branch afterward, inside `packages/server`.
-
-If anything above didn't need to exist for a tool to work, that's a sign it snuck in ahead of schedule — flag it before moving on.
+3. Start Stage 5 (resources, prompts and completions) on the next numbered branch afterward, inside `packages/server`.
 
 ## MCP Client
 
