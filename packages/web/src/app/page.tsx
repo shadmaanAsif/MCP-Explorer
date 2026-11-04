@@ -1,4 +1,4 @@
-import { getClient } from '@/lib/mcp-client';
+import { withClient } from '@/lib/mcp-client';
 import { ToolCard } from '@/components/ToolCard';
 
 // Without this, `next build` would statically prerender this route — which
@@ -7,8 +7,7 @@ import { ToolCard } from '@/components/ToolCard';
 export const dynamic = 'force-dynamic';
 
 export default async function Page() {
-  const client = await getClient();
-  const { tools } = await client.listTools();
+  const { tools } = await withClient((client) => client.listTools());
 
   return (
     <main>
