@@ -1,6 +1,6 @@
 'use server';
 
-import { getClient } from '@/lib/mcp-client';
+import { withClient } from '@/lib/mcp-client';
 
 export type RunToolResult = {
   content: unknown;
@@ -15,7 +15,8 @@ export type RunToolResult = {
 // like `isError` to `unknown` once inferred back on the client side of the
 // action boundary.
 export async function runTool(name: string, args: Record<string, unknown>): Promise<RunToolResult> {
-  const client = await getClient();
-  const result = await client.callTool({ name, arguments: args });
-  return { content: result.content, isError: result.isError === true };
+  return withClient(async (client) => {
+    const result = await client.callTool({ name, arguments: args });
+    return { content: result.content, isError: result.isError === true };
+  });
 }
