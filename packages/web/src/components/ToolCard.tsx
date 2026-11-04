@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useRef, useState, useTransition } from 'react';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { runTool, type RunToolResult } from '@/app/actions';
 
@@ -19,6 +19,7 @@ export function ToolCard({ tool }: { tool: Tool }) {
   const [isPending, startTransition] = useTransition();
   const [result, setResult] = useState<RunToolResult | null>(null);
   const [inputError, setInputError] = useState<string | null>(null);
+  const callIdRef = useRef<string | null>(null);
 
   function handleRun() {
     const args: Record<string, unknown> = {};
@@ -41,9 +42,23 @@ export function ToolCard({ tool }: { tool: Tool }) {
     }
     setInputError(null);
 
+    const callId = crypto.randomUUID();
+    callIdRef.current = callId;
     startTransition(async () => {
-      const res = await runTool(tool.name, args);
+      const res = await runTool(tool.name, args, callId);
       setResult(res);
+    });
+  }
+
+  // Sent as a plain fetch to a route handler (see api/cancel/route.ts), not
+  // as a Server Action, so it is not queued behind the running call.
+  function handleCancel() {
+    const callId = callIdRef.current;
+    if (!callId) return;
+    void fetch('/api/cancel', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ callId })
     });
   }
 
@@ -73,6 +88,11 @@ export function ToolCard({ tool }: { tool: Tool }) {
       <button type="button" onClick={handleRun} disabled={isPending}>
         {isPending ? 'Running…' : 'Run'}
       </button>
+      {isPending && (
+        <button type="button" onClick={handleCancel}>
+          Cancel
+        </button>
+      )}
       {inputError && <pre className="result error">{inputError}</pre>}
       {result && (
         <pre className={result.isError ? 'result error' : 'result'}>
