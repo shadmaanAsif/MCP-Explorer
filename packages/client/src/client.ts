@@ -75,6 +75,57 @@ async function main() {
   );
   console.log('Result of get_weather_batch:', batchResult.content);
 
+  // --- Resources: read-only data addressed by URI -------------------------
+  // The client asks what exists, then reads one by URI. Nothing is executed.
+  const { resources } = await client.listResources();
+  console.log(
+    'Resources:',
+    resources.map((r) => r.uri)
+  );
+  const { resourceTemplates } = await client.listResourceTemplates();
+  console.log(
+    'Resource templates:',
+    resourceTemplates.map((t) => t.uriTemplate)
+  );
+  const dubai = await client.readResource({ uri: 'weather://city/dubai' });
+  // Contents are either text or a binary blob, so check which one came back.
+  const first = dubai.contents[0];
+  console.log('Read weather://city/dubai:', first && 'text' in first ? first.text : first);
+
+  // --- Prompts: ready-made requests the user picks ------------------------
+  // getPrompt returns messages. A real AI client would send them to its
+  // model; this CLI has no model, so it only prints them.
+  const { prompts } = await client.listPrompts();
+  console.log(
+    'Prompts:',
+    prompts.map((p) => p.name)
+  );
+  const prompt = await client.getPrompt({
+    name: 'compare_weather',
+    arguments: { cityA: 'dubai', cityB: 'delhi' }
+  });
+  console.log('compare_weather ->', prompt.messages[0]?.content);
+
+  // --- Completions: autocomplete for prompt/resource arguments ------------
+  const promptCompletion = await client.complete({
+    ref: { type: 'ref/prompt', name: 'compare_weather' },
+    argument: { name: 'cityA', value: 'd' }
+  });
+  console.log("Completions for cityA='d':", promptCompletion.completion.values);
+  const resourceCompletion = await client.complete({
+    ref: { type: 'ref/resource', uri: 'weather://city/{name}' },
+    argument: { name: 'name', value: 'n' }
+  });
+  console.log("Completions for weather://city/{name} 'n':", resourceCompletion.completion.values);
+
+  // Unlike a tool's isError result, a bad resource or prompt request is a
+  // protocol error, so it is thrown and needs a try/catch.
+  try {
+    await client.readResource({ uri: 'weather://city/atlantis' });
+  } catch (error) {
+    console.log('Read weather://city/atlantis failed:', (error as Error).message);
+  }
+
   await client.close();
 }
 
