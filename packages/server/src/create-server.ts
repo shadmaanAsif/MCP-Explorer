@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { registerCatalog } from './catalog.js';
 
 // --- get_weather: talking to Open-Meteo without trusting it -----------------
 // The upstream API can be slow, down, or reply with something unexpected, and
@@ -307,6 +308,8 @@ export function createServer(session: SessionState = {}): McpServer {
       return { content: [{ type: 'text', text: `${home.name}: ${result.text}` }] };
     }
   );
+
+  registerCatalog(server, session);
 
   return server;
 }
