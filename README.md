@@ -4,272 +4,69 @@ A hands-on project for learning **MCP (Model Context Protocol)** by building bot
 
 > This README is also published as a browsable page: **[MCP Explorer](https://claude.ai/code/artifact/2ac1d88f-d347-40a2-ac23-1febc68554d0)**. It mirrors everything here — keep both in sync as the plan changes.
 
-## MCP Server
+## What is MCP?
 
-This half of the project is the one built so far: a real MCP server, growing in stages.
+MCP (Model Context Protocol) is a standard way for an AI assistant to call out to external tools and data, instead of every app inventing its own custom integration. You write an **MCP server** that exposes a small set of capabilities — **tools** (functions the assistant can call), **resources** (read-only data) and **prompts** (reusable request templates) — and any MCP-compatible client (Cursor, Claude Desktop, Claude Code, etc.) can discover and use them the same way. Think of it like a USB port for AI assistants: one common plug, many different devices behind it.
 
-### Overview
+The point of this repo isn't to rush to a "real" server. It's to build enough small, working versions that each new MCP concept has somewhere to attach itself in your head.
 
-This repo starts as small as an MCP server can possibly be: one file, one tool, no extra layers. From there, it grows in stages — each one adding a single new concept (a second tool, input validation, a real API, error handling) until it looks like something you'd actually use.
-
-The point isn't to rush to a "real" server. It's to build enough small, working versions that each new MCP concept has somewhere to attach itself in your head.
-
-### What is MCP?
-
-MCP (Model Context Protocol) is a standard way for an AI assistant to call out to external tools and data, instead of every app inventing its own custom integration. You write an **MCP server** that exposes a small set of capabilities — mainly **tools** (functions the assistant can call) — and any MCP-compatible client (Claude Desktop, Claude Code, etc.) can discover and use them the same way. Think of it like a USB port for AI assistants: one common plug, many different devices behind it.
-
-### Initial Setup (Stage 1)
-
-Stage 1 is deliberately as small as a working MCP server can be: a server with a single tool that adds two numbers.
-
-#### Folder structure
-
-Originally this was one flat package (one `package.json`, one `src/`, shared by both the server and the custom client). As of `06-monorepo-server-client-split`, server and client are **fully separate packages** in a pnpm-workspaces monorepo (the repo moved from npm to pnpm in branch `09-switch-to-pnpm`) — each with its own `package.json` (so each declares only the dependencies it actually uses — the client never needed `zod`, for instance) and its own `build/` output:
-
-```
-MCP-Explorer/
-├── .gitignore
-├── README.md
-├── package.json          # workspace root: no code, just wiring
-├── tsconfig.base.json     # compiler options shared by every package
-└── packages/
-    ├── server/
-    │   ├── package.json   # @mcp-explorer/server — its own deps, build, start
-    │   ├── tsconfig.json   # extends the base config, sets rootDir/outDir
-    │   └── src/
-    │       └── index.ts
-    └── client/
-        ├── package.json   # @mcp-explorer/client — its own deps, build, start
-        ├── tsconfig.json
-        └── src/
-            └── client.ts
-```
-
-Here's why each piece exists — nothing here is optional scaffolding:
-
-- **`pnpm-workspace.yaml`** and root `package.json` — the workspace file lists `packages/*`, so `pnpm install` at the root links the packages together (`web` depends on the client as `workspace:*`). pnpm is strict: a package can only import what its own `package.json` declares, so nothing leaks in through hoisting. The root `package.json` pins `packageManager` and holds the scripts. Its `scripts` just forward to the right package (`pnpm build` builds both; `pnpm start` / `pnpm client` each target one workspace), so the top-level commands you already know didn't change.
-- **`tsconfig.base.json`** — the compiler options (`target`, `module`, `strict`, etc.) both packages need are identical, so they live once here instead of being copied twice. Each package's own `tsconfig.json` `extends` this and only adds its own `rootDir`/`outDir`.
-- **`packages/server/`** and **`packages/client/`** — each is a real, independent package: its own `package.json` (own name, own dependencies, own `build`/`start` scripts) and its own `src/` → `build/` pair. Splitting them this way means the client can never accidentally depend on something only the server needs (or vice versa) — the two halves of the protocol stay genuinely decoupled, not just organized into different folders of one package.
-- **`.gitignore`** — keeps every `node_modules/` and `build/` (server's, client's, and the root's) out of version control. Neither belongs in git history; the pattern matches at any depth, so one `.gitignore` still covers both packages.
-
-Nothing else exists yet beyond this split — no shared internal package, no test framework. Those would be answers to problems this project doesn't have yet.
-
-#### Dependencies
-
-Now split per-package, matching what each half of the protocol actually needs:
-
-- **`@modelcontextprotocol/sdk`** (both `packages/server` and `packages/client`) — the official library that implements the MCP protocol itself (message formats, the server/client objects, the transport). Without it we'd be hand-writing JSON-RPC message handling.
-- **`zod`** (`packages/server` only) — a schema library. When we register the `add` tool, we use `zod` to say "this tool takes two numbers, `a` and `b`." The SDK uses that schema for two jobs at once: telling MCP clients what shape of input to send, *and* rejecting bad input at runtime. The client never validates a schema itself, so it never needed this dependency — a concrete example of why the split makes the dependency list honest instead of shared-and-unused.
-- **`typescript`** / **`@types/node`** (root-level `devDependencies`, dev-only) — the compiler itself, and type definitions for Node's built-in APIs. These live at the root rather than duplicated in both packages, since it's the same build tooling either way, not something specific to the server or the client.
-
-> A note on `zod` here: giving the `add` tool a schema is not "Stage 2's input validation" — it's just how any MCP tool declares its shape, even the simplest one. Stage 2 (below) builds on top of this with *richer* validation: a custom rule with its own error message, not just a type.
-
-#### The one tool: `add`
-
-[`src/index.ts`](src/index.ts) does three things, in order:
-
-1. **Create a server** — `new McpServer({ name, version })`. This is the object a client talks to.
-2. **Register one tool** — `server.registerTool("add", { ...schema... }, handler)`. The handler receives already-validated `{ a, b }` and returns their sum as a text result.
-3. **Connect a transport** — `StdioServerTransport`. "stdio" means the client talks to this process over its stdin/stdout, rather than over a network port. It's the simplest possible way to run an MCP server: the client just launches the process and starts writing/reading.
-
-That's the whole mental model for Stage 1: **server → tool → transport**. Everything MCP does at a larger scale is built from these same three pieces.
-
-### Stage 2 — Second tool + input validation *(on `main`)*
-
-Stage 2 adds one more tool, `divide`, specifically to show what validation looks like once "wrong type" isn't the only way a call can be bad.
-
-#### Why `divide`, not something else
-
-`add` only ever needed zod to describe a *shape*: two numbers, no further rules — any two numbers make a valid call. `divide` needs a *rule* on top of that shape: `b` can be any number except zero. That's exactly the distinction Stage 1's note above was pointing at — a business rule, not just a type.
-
-```ts
-b: z
-  .number()
-  .refine((value) => value !== 0, {
-    message: 'b must not be zero — division by zero is undefined'
-  })
-  .describe('The denominator (must not be zero)')
-```
-
-`.refine()` layers a custom check on top of the base `z.number()` type check, with its own error message — that message is what the caller actually sees when the rule is broken.
-
-#### What happens on bad input — verified, not assumed
-
-Calling `divide` with `a: 10, b: 0` never reaches the handler function at all. The SDK validates arguments against the schema *before* your code runs, and returns this instead:
-
-```json
-{
-  "content": [{ "type": "text", "text": "MCP error -32602: Input validation error: Invalid arguments for tool divide: b must not be zero — division by zero is undefined at b" }],
-  "isError": true
-}
-```
-
-Two things worth noticing here:
-- **`isError: true`** — this is a *tool-level* error result, not a JSON-RPC protocol error and not a crash. The server keeps running; the client is just told this particular call failed, with a message tracing straight back to the `.refine()` message above.
-- The handler's `console.error('[mcp-demo] divide called...')` never prints for this call. Validation genuinely happens before your code ever sees the input — you don't need to (and shouldn't) re-check `b !== 0` yourself inside the handler.
-
-#### Try it yourself
-
-Through the Inspector: call `divide` with `a: 10, b: 2` (works, returns `5`), then `a: 10, b: 0` (rejected, with the message above).
-
-### Stage 3 — Connect to a real data source / API *(on `main`)*
-
-Stage 3 adds `get_weather(latitude, longitude)`, calling [Open-Meteo](https://open-meteo.com/) (free, no API key) for current temperature and wind speed. It's the first tool doing real I/O instead of pure math.
-
-```ts
-const response = await fetch(url);
-if (!response.ok) {
-  return { isError: true, content: [{ type: 'text', text: `Open-Meteo returned ${response.status} ${response.statusText}` }] };
-}
-```
-
-The `try`/`catch` around the `fetch` catches network failure (DNS, unreachable host) the same way `divide`'s `.refine()` catches bad input — as a normal `isError: true` result, not a crash. Verified both paths directly: a real call against Open-Meteo, and a call against a deliberately unreachable host, which returned `Failed to reach Open-Meteo: fetch failed` instead of an unhandled rejection.
-
-Stage 3 deliberately stopped there — no retries, no timeout, no partial-data handling. Just: don't let the process die when the network doesn't cooperate. Stage 4 (next section) adds those.
-
-### Stage 4 — Error handling, progress & stateful HTTP *(on `main`)*
-
-Built across branches #10 (`10-stage-4-error-handling-realtime`), #11 (`11-stage-4-wrapup`, dashboard reconnect) and #12 (`12-stage-4-verify-docs`, verification and these docs). Three parts:
-
-**1. Error handling in `get_weather`** ([`fetchWeather()`](packages/server/src/create-server.ts))
-- 8s timeout per attempt, up to 3 attempts, backoff 300ms then 600ms.
-- Retries only on 5xx, timeout and network errors. A 4xx, invalid JSON or an unexpected response shape returns an error straight away — retrying cannot fix those.
-- Final message ends with `(gave up after 3 attempts)`. Worst case against a hung upstream is about 25s.
-- `OPEN_METEO_URL` overrides the API address so the failure paths can be tested against a local stub.
-- The caller's cancel signal (`extra.signal`) aborts the in-flight `fetch` and stops the retry loop.
-
-**2. Progress: `get_weather_batch(locations)`**
-- 1 to 5 named locations, fetched one at a time with `fetchWeather`. After each one it sends `notifications/progress`, but only if the client asked (sent a progress token — `onprogress` in the client SDK; `packages/client` also sets `resetTimeoutOnProgress`).
-- One failing location shows as `ERROR - …` in the output without failing the batch. The call is an error only if every location failed.
-- Progress works in **both** HTTP modes: updates stream back on the same POST that made the call. (An earlier version of these docs said it needed stateful mode. That was wrong.)
-
-**3. Stateful Streamable HTTP** ([`http.ts`](packages/server/src/http.ts))
-- `MCP_MODE=stateful|stateless` (default `stateful`). `PORT` and `MCP_SESSION_TTL_MS` (idle timeout, default 30 minutes) also apply.
-- `handleStateful` routes by the `Mcp-Session-Id` header: a known id goes to that session's transport, an unknown id gets 404, a missing id on anything but `initialize` gets 400. `createSession` builds one `McpServer` and transport per client and stores them in the `sessions` Map. `sweepIdleSessions` closes idle sessions and shutdown closes all of them.
-- Per-session state lives in a `SessionState` object passed to `createServer(session)`. The tools `set_home_location` and `get_home_weather` use it.
-- Sessions are in memory only: a server restart forgets them, and the next request with an old id gets 404.
-
-| | stateless | stateful (default) |
-|---|---|---|
-| `McpServer` | new per POST, discarded after | one per session, kept in the `sessions` Map |
-| Remembers a client | no | yes (`SessionState`) |
-| Client cancel reaches a running call | no | yes |
-| Scales behind a load balancer | any instance can answer | needs sticky routing or a shared store |
-
-**Verified, not assumed** (against a stub upstream that accepts a request and never answers; the client aborts at 2s and stays connected):
-- stateless: upstream connection closes at 8.0s (the server's own timeout) and a retry follows at 8.3s — the cancel never arrived, because it is a separate POST handled by a fresh `McpServer` that has no record of the call.
-- stateful: upstream connection closes at 2.0s with no retry — the cancel reached the running handler.
-- idle sweep (TTL 4s): an idle session was closed and its old id then returned 404, while a session that kept making requests survived.
-
-**Dashboard changes that came with it**
-- Array and object arguments (such as `locations`) get a JSON textarea.
-- `withClient()` in [`mcp-client.ts`](packages/web/src/lib/mcp-client.ts): on a 404 it drops the cached client, reconnects (new session) and retries once, for both tool runs and the page's `listTools()`.
-- A Cancel button while a call runs. It posts to `/api/cancel` (a route handler, not a Server Action, because Server Actions from the browser run one at a time and a cancel would queue behind the call it targets) and aborts that call's `AbortController`, which the SDK turns into a cancel message. It only stops server work in stateful mode.
-
-### How to Run
+## Quick start
 
 ```bash
 pnpm install
 pnpm build
-pnpm start
+pnpm start:http     # the server, on http://localhost:4768/mcp
 ```
 
-`pnpm build` compiles both packages (`packages/server/src/index.ts` → `packages/server/build/index.js`, and the client the same way); `pnpm start` runs the compiled server specifically. (There's also `pnpm dev`, which just does both in one step.) These are root-level scripts that forward to the right workspace — you never need to `cd` into `packages/server` yourself.
+Then, in another terminal, try a client:
 
-On its own, the server will print `mcp-demo server running on stdio` to stderr and then just sit there — that's expected, not a hang. Keep reading to see why, and how to actually talk to it.
-
-### Understanding the Inspector
-
-#### Why the server does nothing by itself
-
-An MCP server never acts on its own — it only responds when a **client** sends it a request. Normally that client is a real AI assistant (Claude Desktop, Claude Code, etc.) deciding on its own when to call a tool. Since we don't have one of those wired up yet, we use the [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector): a small web UI that plays the role of "the client" — except *you* click the buttons instead of an AI deciding to.
-
-```
-You (clicking buttons)  →  Inspector  →  your server (packages/server/build/index.js)
+```bash
+pnpm client         # scripted CLI client
+pnpm web            # web dashboard on http://localhost:4767
 ```
 
-Two things worth knowing about what's actually happening:
+The server can also run over stdio (`pnpm start`), which is how the Inspector and Cursor can launch it themselves. **Every client and both transports, step by step: [docs/connecting-clients.md](docs/connecting-clients.md).**
 
-- Your server and its client talk in **JSON-RPC** — small JSON messages like `{"method":"tools/call","params":{"name":"add","arguments":{"a":2,"b":3}}}` — sent over the server process's **stdin**, with replies written back over its **stdout**.
-- The Inspector is what actually *launches* your server and sends it those messages. The browser page itself doesn't speak MCP at all — it just tells the Inspector (via its own local proxy) what to send, and shows you what comes back.
+## What's in the repo
 
-#### Step by step: testing `add`
-
-1. **Build the server** (from inside this project folder — the next command uses a relative path):
-   ```bash
-   pnpm build
-   ```
-2. **Start the Inspector**, also from inside this folder:
-   ```bash
-   pnpm dlx @modelcontextprotocol/inspector node packages/server/build/index.js
-   ```
-3. It prints a URL with a security token, e.g. `http://localhost:6274/?MCP_PROXY_AUTH_TOKEN=<token>`. Open that exact URL. (The token just proves it's really you talking to your own local Inspector — it isn't part of MCP itself.)
-4. Confirm **Command** is `node` and **Arguments** is `packages/server/build/index.js`, then click **Connect**.
-5. The **Tools** tab fills in by itself with `add` — that's the Inspector automatically calling `tools/list` right after connecting.
-6. Click `add`, type numbers into `a` and `b`, click **Run Tool** — the sum comes back as the result.
-
-#### One instance per connection — not the same as `pnpm start`
-
-Every time you click **Connect**, the Inspector spawns a **brand-new copy** of your server — a separate running process from any `pnpm start` / `pnpm dev` you might already have open elsewhere. Same code, but two independent instances that share nothing: nothing sent to one shows up in the other. If you're testing through the Inspector, the terminal running `pnpm start` isn't part of that loop at all — you can ignore it.
-
-#### What you actually need running
-
-To test a tool through the Inspector, this is the complete list — nothing else:
-
-1. **The server is built** — `pnpm build` has run at least once (and again after any edit), so `packages/server/build/index.js` exists and is current.
-2. **The Inspector is running** — from inside this folder: `pnpm dlx @modelcontextprotocol/inspector node packages/server/build/index.js`.
-3. **The token is copied and pasted** — when it starts, the Inspector prints a URL like `http://localhost:6274/?MCP_PROXY_AUTH_TOKEN=<token>`. Copy everything after `TOKEN=` and paste it into the Configuration panel's **Proxy Session Token** field. Command/Arguments should be `node` / `packages/server/build/index.js`.
-4. **You've clicked Connect.**
-
-Notice `pnpm start` / `pnpm dev` isn't on that list. It's easy to assume "the server" needs to be running separately, but it doesn't — the Inspector builds nothing itself, but as long as `packages/server/build/index.js` already exists on disk, it's entirely self-sufficient.
-
-#### Where your own logs show up
-
-The `add` handler logs each call:
-
-```ts
-console.error(`[mcp-demo] add called with a=${a}, b=${b}`);
+```
+MCP-Explorer/
+├── package.json, pnpm-workspace.yaml, tsconfig.base.json
+├── docs/
+│   ├── connecting-clients.md      # how to connect Cursor, the Inspector, the CLI, the dashboard
+│   └── branches/                  # one file per numbered branch: what changed and how to try it
+├── constitution/                  # longer project guidance, read on demand
+└── packages/
+    ├── server/    # @mcp-explorer/server — tools, resources, prompts; stdio and HTTP entry points
+    ├── client/    # @mcp-explorer/client — a minimal client built from scratch
+    └── web/       # @mcp-explorer/web    — Next.js dashboard that runs the server's tools
 ```
 
-This uses `console.error` (stderr), never `console.log` (stdout) — stdout is reserved for the JSON-RPC replies themselves, so anything else printed there would corrupt the protocol. The Inspector captures the spawned server's stderr and shows it inside its own UI — not in whatever terminal you happened to launch `pnpm dlx @modelcontextprotocol/inspector` from.
+## Branch history
 
-### Connecting from a Real Client (Cursor)
+Every branch gets a global sequence number, and every numbered branch has its own file in [`docs/branches/`](docs/branches/) explaining what happened, the details worth knowing, and how to connect and try it. Read them in order to follow how the project grew.
 
-The Inspector is a stand-in for "the client" — useful for testing, but a real AI assistant talks to this server the same way, just deciding on its own when to call a tool instead of you clicking buttons. [Cursor](https://cursor.com/) is an MCP client out of the box: point it at the compiled server and it does its own `tools/list` / `tools/call`.
+| # | Branch | What it did |
+|---|---|---|
+| 1 | [`stage-1-basic-server`](docs/branches/01-stage-1-basic-server.md) | Stage 1: the smallest MCP server, with one tool, `add`. |
+| 2 | [`explore-mcp-client`](docs/branches/02-explore-mcp-client.md) | Side exploration: a minimal client written from scratch. |
+| 3 | [`03-claude-md-constitution`](docs/branches/03-claude-md-constitution.md) | Side exploration: `CLAUDE.md` and the `constitution/` guidance files. |
+| 4 | [`04-stage-2-second-tool-validation`](docs/branches/04-stage-2-second-tool-validation.md) | Stage 2: a second tool, `divide`, and validation with a custom rule. |
+| 5 | [`05-stage-3-real-data-source`](docs/branches/05-stage-3-real-data-source.md) | Stage 3: `get_weather`, the first tool that calls a real API. |
+| 6 | [`06-monorepo-server-client-split`](docs/branches/06-monorepo-server-client-split.md) | Side exploration: server and client become separate packages. |
+| 7 | [`07-web-nextjs-react`](docs/branches/07-web-nextjs-react.md) | Side exploration: the web dashboard rebuilt in Next.js and React. |
+| 8 | [`08-server-http-transport`](docs/branches/08-server-http-transport.md) | Side exploration: a standalone Streamable HTTP entry point. |
+| 9 | [`09-switch-to-pnpm`](docs/branches/09-switch-to-pnpm.md) | Side exploration: the repo moves from npm to pnpm. |
+| 10 | [`10-stage-4-error-handling-realtime`](docs/branches/10-stage-4-error-handling-realtime.md) | Stage 4: timeouts and retries, progress updates, and stateful HTTP sessions. |
+| 11 | [`11-stage-4-wrapup`](docs/branches/11-stage-4-wrapup.md) | Stage 4: the dashboard reconnects after a server restart. |
+| 12 | [`12-stage-4-verify-docs`](docs/branches/12-stage-4-verify-docs.md) | Stage 4: verified cancel and idle sweep, added the dashboard Cancel button. |
+| 13 | [`13-stage-5-resources-prompts`](docs/branches/13-stage-5-resources-prompts.md) | Stage 5 *(in progress)*: resources, prompts and argument completion. |
 
-Add this to Cursor's `mcp.json` (Cursor Settings → MCP, or `~/.cursor/mcp.json`):
+> **Branch numbering:** every new branch — a numbered stage or a side exploration — gets the next global sequence number (`NN-description`), so the branch list alone shows true creation order, not just which stages happen to be numbered. `stage-1-basic-server` and `explore-mcp-client` predate the convention (they are #1 and #2) and keep their original names. #3 turned out to be a side exploration rather than Stage 2, which is why the counter is global and does not reserve numbers for stages in advance. Adding a branch means adding its file in `docs/branches/` and a row to the table above.
 
-```json
-{
-  "mcpServers": {
-    "mcp-demo": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["/absolute/path/to/MCP-Explorer/packages/server/build/index.js"]
-    }
-  }
-}
-```
+## Roadmap
 
-- The path must point at `packages/server/build/index.js` (the compiled output), so `pnpm build` needs to have run at least once — and again after any server change.
-- `"type": "stdio"` matches exactly how the Inspector talks to it: Cursor launches this as a subprocess and exchanges JSON-RPC over its stdin/stdout.
-
-Restart Cursor (or reload its MCP servers) afterward, and `add`, `divide`, and `get_weather` show up as tools the assistant can call on its own.
-
-### Streamable HTTP (second entry point)
-
-Since `08-server-http-transport`, the tools live in [`create-server.ts`](packages/server/src/create-server.ts) as a `createServer()` factory, and there are two entry points that connect it to a transport:
-
-- [`index.ts`](packages/server/src/index.ts) — **stdio**. One `McpServer` for the life of the process, spawned by the client (Inspector, Cursor, etc.). `pnpm start`.
-- [`http.ts`](packages/server/src/http.ts) — **Streamable HTTP**. A standalone process listening on `PORT` (default `4768`). In **stateful** mode (default) it keeps one `McpServer` per `Mcp-Session-Id`; with `MCP_MODE=stateless` (`sessionIdGenerator: undefined`) `POST /mcp` builds a fresh `McpServer` per request. `pnpm start:http`.
-
-Both serve identical tools — it's one server definition, two ways to run it. `@mcp-explorer/client` and the web dashboard connect over HTTP (`MCP_SERVER_URL`, default `http://localhost:4768/mcp`), so the server has to be running first. `MCP_MODE=stateful` (default) keeps one server per client, keyed by an `Mcp-Session-Id` header; `MCP_MODE=stateless` builds a fresh one per request. Stateless is enough for single request/response tools, and progress works in both; remembering a client and delivering a client's cancel to a running call need stateful. Details in Stage 4 above.
-
-### Roadmap
-
-Every stage (and every side exploration) below gets its own git branch. The habit is: **branch → build → understand it → merge into `main` → branch again for the next thing.** Nothing moves to `main` until it's understood, not just working.
-
-> **Branch numbering:** starting from this point, every new branch — a numbered stage or a side exploration — also gets a global sequence number prefix (`NN-description`), so the branch list alone shows true creation order, not just which stages happen to be numbered. `stage-1-basic-server` and `explore-mcp-client` predate this convention (they'd be #1 and #2) and keep their original names. Branch #3 turned out to be a side exploration too (`03-claude-md-constitution`, adding `CLAUDE.md`) rather than Stage 2 — proof the counter really is global and doesn't reserve numbers for stages in advance. Stage 2 landed as `04-stage-2-second-tool-validation`, Stage 3 as `05-stage-3-real-data-source`, #6 was another side exploration (`06-monorepo-server-client-split`, splitting server/client into separate npm-workspace packages), and #7 (`07-web-nextjs-react`, rewriting the web dashboard as Next.js + React) followed it, and #8 (`08-server-http-transport`, adding a Streamable HTTP entry point to the server and moving the client onto it) came after that, and #9 (`09-switch-to-pnpm`, moving the repo from npm to pnpm) followed. Stage 4 landed as #10 (`10-stage-4-error-handling-realtime`), with #11 (`11-stage-4-wrapup`, dashboard reconnect after a server restart) and #12 (`12-stage-4-verify-docs`, verification, web cancel and these docs) finishing it — anything after that gets whatever number comes next when it's actually created.
+Every stage (and every side exploration) gets its own git branch. The habit is: **branch → build → understand it → merge into `main` → branch again for the next thing.** Nothing moves to `main` until it's understood, not just working.
 
 ```mermaid
 flowchart LR
@@ -289,22 +86,23 @@ Stages 1–4 build the server; **Stages 5–11 are the enterprise track** — wh
 
 1. **Stage 1 — Basic server + one trivial tool** *(on `main`)*
    A server exists, and it can do exactly one thing (`add`). Goal: understand server / tool / transport as separate concepts.
+   Details: [#1](docs/branches/01-stage-1-basic-server.md)
 
 2. **Stage 2 — Second tool + input validation** *(on `main`)*
    Add a second, slightly less trivial tool, and lean harder on `zod` — rejecting bad input with clear errors rather than trusting the caller. Goal: see how multiple tools coexist, and what "validation" means beyond just typing.
-   Branch: `04-stage-2-second-tool-validation`
+   Details: [#4](docs/branches/04-stage-2-second-tool-validation.md)
 
 3. **Stage 3 — Connect to a real data source / API** *(on `main`)*
    Swap a toy tool for one that does real (async) work — calling a public API or reading real data. Goal: handle async operations and things that can be slow or unavailable.
-   Branch: `05-stage-3-real-data-source`
+   Details: [#5](docs/branches/05-stage-3-real-data-source.md)
 
 4. **Stage 4 — Error handling, a real-time use case & stateful HTTP** *(on `main`)*
-   Harden the server against failures (bad responses, timeouts, partial data), add a tool that reports progress while it runs, and add **stateful Streamable HTTP** — an `Mcp-Session-Id` issued on `initialize`, a map of live sessions, one `McpServer` per session. Goal: go from "it works when everything goes right" to "it behaves sensibly when it doesn't," and see why sessions exist at all. Built as described in the Stage 4 section above.
-   Branches: `10-stage-4-error-handling-realtime`, `11-stage-4-wrapup`, `12-stage-4-verify-docs`
+   Harden the server against failures (bad responses, timeouts, partial data), add a tool that reports progress while it runs, and add **stateful Streamable HTTP** — an `Mcp-Session-Id` issued on `initialize`, a map of live sessions, one `McpServer` per session. Goal: go from "it works when everything goes right" to "it behaves sensibly when it doesn't," and see why sessions exist at all.
+   Details: [#10](docs/branches/10-stage-4-error-handling-realtime.md), [#11](docs/branches/11-stage-4-wrapup.md), [#12](docs/branches/12-stage-4-verify-docs.md)
 
-5. **Stage 5 — Resources, prompts & completions**
+5. **Stage 5 — Resources, prompts & completions** *(in progress)*
    Tools are one of three server primitives. Add **resources** (read-only data a client can attach, addressed by URI) and **prompts** (reusable templates the user picks), plus argument completion. Goal: know which primitive fits which job instead of making everything a tool.
-   Branch: `0N-stage-5-resources-prompts` *(number assigned when created)*
+   Details: [#13](docs/branches/13-stage-5-resources-prompts.md)
 
 6. **Stage 6 — Testing & CI**
    Unit-test tools, integration-test the server through an in-memory transport and through real HTTP, add contract checks on tool schemas, and run it all in GitHub Actions on every PR. Goal: change a server safely before it has real users.
@@ -330,37 +128,4 @@ Stages 1–4 build the server; **Stages 5–11 are the enterprise track** — wh
     Dockerfile, environment-based config, a CI/CD pipeline to a real host, a gateway/reverse proxy (TLS, no SSE buffering), and a versioning and deprecation policy for tools. Goal: ship it, update it, and roll it back.
     Branch: `0N-stage-11-containerize-deploy`
 
-**Where we are:** Stages 1–4 are implemented and merged. Branches #6 (`06-monorepo-server-client-split`), #7 (`07-web-nextjs-react`), #8 (`08-server-http-transport`) and #9 (`09-switch-to-pnpm`) are merged side explorations. Stage 4 was #10 and #11, and #12 (`12-stage-4-verify-docs`, this branch) closes it out with the verification, the dashboard Cancel button and these docs. Stages 5–11 above are the plan, not a promise of exact detail.
-
-### Next Steps
-
-1. Run `pnpm install && pnpm build`, start the HTTP server (`pnpm start:http`), then confirm the tools work through `pnpm client` and `pnpm web`; the Inspector still works over stdio against `packages/server/build/index.js`.
-2. Once that makes sense, this branch is ready for a PR into `main`.
-3. Start Stage 5 (resources, prompts and completions) on the next numbered branch afterward, inside `packages/server`.
-
-## MCP Client
-
-Everything under **MCP Server** covers one half of the protocol: a program that answers requests. The other half is a **client** — something that connects to a server and calls its tools. The Inspector (above) is one example of a client, but it's a pre-built tool with a UI. This side of the project is about writing a minimal client from scratch instead, in plain code, to see that half of the exchange directly.
-
-**Status: built, on `main`.** This isn't one of the four numbered server stages — it was a separate, parallel exploration (originally `explore-mcp-client`, merged via [#2](https://github.com/shadmaanAsif/MCP-Explorer/pull/2)) for understanding the client side of MCP, and it's kept up to date as the server grows.
-
-- **What it does:** [`packages/client/src/client.ts`](packages/client/src/client.ts) connects to the running HTTP server from code (no Inspector, no UI), calls `listTools()`, then `callTool()` against every current tool — `add(2, 3)`, `divide(10, 2)`, `divide(10, 0)` to show a validation rejection coming back as data (`isError: true`, not a thrown exception), and `get_weather`. Run it with `pnpm client` from the repo root, with the server already running.
-- **A detail from the monorepo split (historical):** since Stage `06-monorepo-server-client-split`, server and client are separate packages with separate `build/` output, so the client can no longer assume the server's compiled file is a sibling of wherever it's run from. It resolves the path itself, relative to its own file location:
-  ```ts
-  const serverEntry = path.resolve(here, '../../server/build/index.js');
-  ```
-  This makes the client correct regardless of the current working directory it's launched from — the same property a real client like Claude Desktop needs, since it launches your server from wherever *it* happens to run, not from inside this repo.
-- **Another detail, from `07-web-nextjs-react`:** this resolution moved from module load time into `connectToServer()` itself, and swapped `import.meta.dirname` for `path.dirname(fileURLToPath(import.meta.url))`. Next.js's build process imports this module (to collect page data) without necessarily calling `connectToServer()`, and in that import context — and again, separately, under Turbopack's externalized-module loader at runtime — `import.meta.dirname` came back `undefined`. Resolving lazily, inside the function, and via `import.meta.url` rather than the newer `dirname` shorthand, made it work in every context that imports this module, not just the ones that call it eagerly at the top.
-- **Since `08-server-http-transport`:** all of that path resolution is gone. `connectToServer(url?)` in [`connection.ts`](packages/client/src/connection.ts) uses the SDK's `StreamableHTTPClientTransport` and a URL (`MCP_SERVER_URL`, default `http://localhost:4768/mcp`) instead of spawning a process, so the client no longer needs to know where the server's build output lives — or even that it's on the same machine. That's what lets `web` be deployed separately from the server.
-- **Why it's worth doing:** it confirms the client/server relationship holds regardless of who's on the client end — a human clicking buttons, or a few lines of TypeScript. It's also a convenient scripted way to re-check every tool at once, without the Inspector's manual clicking.
-
-## Web Dashboard
-
-A third client, alongside the Inspector and the scripted `client.ts`: a browser GUI that discovers the server's tools live and lets you run them by filling in a form — no editing code to try different input.
-
-**Status: built and merged (`07-web-nextjs-react`).** Like the client, this is a side exploration, not a numbered server stage. It started (in `06-monorepo-server-client-split`) as a plain Express server handing out one static HTML file with vanilla JS, talking to `@mcp-explorer/client` through two hand-rolled endpoints (`GET /api/tools`, `POST /api/call`). This branch rebuilds it as an actual Next.js + React app.
-
-- **What it does:** [`packages/web/src/app/page.tsx`](packages/web/src/app/page.tsx) is an async Server Component — it calls `getClient()` and `listTools()` directly, on the server, no REST hop in between. Each tool renders as a [`ToolCard`](packages/web/src/components/ToolCard.tsx) (a Client Component), which builds its input fields from the tool's live `inputSchema` and, on "Run", calls a **Server Action** — [`runTool()`](packages/web/src/app/actions.ts) — directly, the same way you'd call any other async function, no `fetch`/`JSON.stringify` in sight. Start the server first (`pnpm start:http`) — `web` connects to it via `MCP_SERVER_URL`. Run it with `pnpm web` (production build) or `pnpm web:dev` (hot reload) from the repo root, at `http://localhost:4767`.
-- **Why Server Components + Server Actions, not a REST port:** the old `/api/tools` and `/api/call` endpoints could have been ported to Next.js Route Handlers verbatim — smaller diff, same mental model. Building it the other way instead is the point: Server Components and Server Actions are what's actually different about Next.js, not just "Express with extra steps." No manual endpoints exist for the dashboard's own use at all.
-- **The connection is a singleton, again:** [`packages/web/src/lib/mcp-client.ts`](packages/web/src/lib/mcp-client.ts) caches the *in-flight promise* from `connectToServer()` on `globalThis`, not a module-level variable — the same HTTP connection as the CLI client, reused across every request instead of reconnecting each time. `globalThis` specifically (not a plain `let`) because Next.js's dev-mode Fast Refresh re-evaluates a module's own scope on every edit; a module-level variable would reset and open a new connection on each reload, while `globalThis` survives it. The promise (not the resolved client) is cached so two requests racing in before the first connection resolves don't each open their own. (Before `08-server-http-transport` this connection spawned a server subprocess, which made the singleton matter more.)
-- **`page.tsx` is forced dynamic** (`export const dynamic = 'force-dynamic'`): without it, `next build` would statically prerender the route — which means actually executing the Server Component, and thus connecting to the MCP server, at build time, then baking that one-time tool list into static HTML instead of fetching it fresh per request.
+**Where we are:** Stages 1–4 are implemented and merged, along with side explorations #2, #3 and #6–#9. Stage 5 is in progress on #13: the server side is built and tested, and the client demo and a guide on choosing between tools, resources and prompts are still to do. Stages 6–11 are the plan, not a promise of exact detail.

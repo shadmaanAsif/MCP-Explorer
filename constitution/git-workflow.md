@@ -12,6 +12,7 @@ Every new branch gets the next global sequence number as a prefix: `NN-descripti
 
 - `stage-1-basic-server` and `explore-mcp-client` predate this convention (they'd be #1 and #2 in spirit) and were not renamed.
 - `03-claude-md-constitution` (this file's own branch) is proof the counter is genuinely global: it claimed #3 even though Stage 2 was "next" in the roadmap, because it was created first.
+- Each numbered branch gets a file `docs/branches/NN-description.md` and a row in the README's "Branch history" table, written in the same PR as the code. The file covers what the branch did, what changed, and how to connect a client and try it.
 - Before creating a branch, check the README's Roadmap section (or `git log --all --oneline --decorate`, or GitHub's branch list) for the highest number already used, and take the next one.
 
 ## PRs, merging, and branch cleanup — read this before running any of these
