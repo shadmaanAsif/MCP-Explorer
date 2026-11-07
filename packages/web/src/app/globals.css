@@ -64,3 +64,8 @@ pre {
 pre.error {
   background: #fdeaea;
 }
+
+main > h2 {
+  font-size: 1.1rem;
+  margin: 1.5rem 0 0.25rem;
+}

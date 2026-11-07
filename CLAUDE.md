@@ -10,6 +10,7 @@ This file is auto-loaded into every session working in this repo. Keep it short 
 
 - **Branch numbering.** Every new branch — a numbered stage or a side exploration — gets the next global sequence-number prefix: `NN-description`. One counter for everything, not one counter per stage. Check the README's Roadmap section for the next number before creating a branch.
 - **PRs only. Never merge. Never delete a branch.** When the user says "merge," that means: commit, push, open a PR, and stop. Actually merging (and any branch cleanup) is the user's call, done by them — so branches stay around for reference afterward. Do not run `gh pr merge` (or anything that merges/deletes) unless the user's instruction is unambiguously "merge this," not just "create a PR." If unsure which they mean, ask.
+- **Every numbered branch gets a doc.** Add `docs/branches/NN-description.md` (what it did, what changed, how to connect and try it, link to `docs/connecting-clients.md`) and a row in the README's "Branch history" table. Keep the README short: the detail belongs in the branch file.
 - **Docs stay in sync.** The README and the published artifact mirror each other. A change to one (Roadmap, branch names, project structure, new sections) generally needs the matching change in the other.
 
 ## Load on demand (`constitution/`)
