@@ -1,6 +1,6 @@
 # #13 — Stage 5: resources, prompts and completions (`13-stage-5-resources-prompts`)
 
-**Status:** in progress. The server side is built and tested. The CLI client demo and the docs index are still to do.
+**Status:** built. The server, the CLI client demo and the choosing guide are done. Not yet merged.
 
 ## What it does
 
@@ -52,6 +52,10 @@ pnpm start:http
 
 **MCP Inspector** (not run against this server): the **Resources** and **Prompts** tabs should list the new items, and the Prompts tab can fetch a prompt with arguments.
 
+**Dashboard:** `pnpm web`, then open the page. Resources and Prompts sections follow the tools.
+
+**CLI:** `pnpm client` prints the resources, a prompt, completions and the error case after the tool calls. (The weather calls need internet access.)
+
 **Any client**, from code:
 ```ts
 await client.listResources();
@@ -60,8 +64,12 @@ await client.getPrompt({ name: 'compare_weather', arguments: { cityA: 'dubai', c
 await client.complete({ ref: { type: 'ref/prompt', name: 'compare_weather' }, argument: { name: 'cityA', value: 'd' } });
 ```
 
-## Still to do
+## Also in this branch
 
-- A section in [`client.ts`](../../packages/client/src/client.ts) that lists and reads resources, gets a prompt and requests a completion.
-- A "tool, resource or prompt?" guide in the README.
-- The web dashboard has no screen for resources or prompts.
+- A demo section in [`client.ts`](../../packages/client/src/client.ts) that lists and reads resources, gets a prompt, requests completions, and catches the thrown error for an unknown city. `pnpm client` runs it.
+- [Tool, resource or prompt?](../tool-resource-or-prompt.md): a guide to choosing between the three.
+- The web dashboard ([`page.tsx`](../../packages/web/src/app/page.tsx), `ResourceCard`, `PromptCard`) now has Resources and Prompts sections: a Read button per resource, and prompt argument fields with completion suggestions and a Get prompt button. It shows the generated text only; no model reads it. Verified in a browser against a throwaway server, including the unknown-city error.
+
+## Not done
+
+- The Inspector was not run against this server.

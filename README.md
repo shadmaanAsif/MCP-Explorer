@@ -60,7 +60,7 @@ Every branch gets a global sequence number, and every numbered branch has its ow
 | 10 | [`10-stage-4-error-handling-realtime`](docs/branches/10-stage-4-error-handling-realtime.md) | Stage 4: timeouts and retries, progress updates, and stateful HTTP sessions. |
 | 11 | [`11-stage-4-wrapup`](docs/branches/11-stage-4-wrapup.md) | Stage 4: the dashboard reconnects after a server restart. |
 | 12 | [`12-stage-4-verify-docs`](docs/branches/12-stage-4-verify-docs.md) | Stage 4: verified cancel and idle sweep, added the dashboard Cancel button. |
-| 13 | [`13-stage-5-resources-prompts`](docs/branches/13-stage-5-resources-prompts.md) | Stage 5 *(in progress)*: resources, prompts and argument completion. |
+| 13 | [`13-stage-5-resources-prompts`](docs/branches/13-stage-5-resources-prompts.md) | Stage 5: resources, prompts and argument completion, a CLI demo, and a [tool vs resource vs prompt guide](docs/tool-resource-or-prompt.md). |
 
 > **Branch numbering:** every new branch — a numbered stage or a side exploration — gets the next global sequence number (`NN-description`), so the branch list alone shows true creation order, not just which stages happen to be numbered. `stage-1-basic-server` and `explore-mcp-client` predate the convention (they are #1 and #2) and keep their original names. #3 turned out to be a side exploration rather than Stage 2, which is why the counter is global and does not reserve numbers for stages in advance. Adding a branch means adding its file in `docs/branches/` and a row to the table above.
 
@@ -100,7 +100,7 @@ Stages 1–4 build the server; **Stages 5–11 are the enterprise track** — wh
    Harden the server against failures (bad responses, timeouts, partial data), add a tool that reports progress while it runs, and add **stateful Streamable HTTP** — an `Mcp-Session-Id` issued on `initialize`, a map of live sessions, one `McpServer` per session. Goal: go from "it works when everything goes right" to "it behaves sensibly when it doesn't," and see why sessions exist at all.
    Details: [#10](docs/branches/10-stage-4-error-handling-realtime.md), [#11](docs/branches/11-stage-4-wrapup.md), [#12](docs/branches/12-stage-4-verify-docs.md)
 
-5. **Stage 5 — Resources, prompts & completions** *(in progress)*
+5. **Stage 5 — Resources, prompts & completions** *(built, not yet merged)*
    Tools are one of three server primitives. Add **resources** (read-only data a client can attach, addressed by URI) and **prompts** (reusable templates the user picks), plus argument completion. Goal: know which primitive fits which job instead of making everything a tool.
    Details: [#13](docs/branches/13-stage-5-resources-prompts.md)
 
@@ -128,4 +128,4 @@ Stages 1–4 build the server; **Stages 5–11 are the enterprise track** — wh
     Dockerfile, environment-based config, a CI/CD pipeline to a real host, a gateway/reverse proxy (TLS, no SSE buffering), and a versioning and deprecation policy for tools. Goal: ship it, update it, and roll it back.
     Branch: `0N-stage-11-containerize-deploy`
 
-**Where we are:** Stages 1–4 are implemented and merged, along with side explorations #2, #3 and #6–#9. Stage 5 is in progress on #13: the server side is built and tested, and the client demo and a guide on choosing between tools, resources and prompts are still to do. Stages 6–11 are the plan, not a promise of exact detail.
+**Where we are:** Stages 1–4 are implemented and merged, along with side explorations #2, #3 and #6–#9. Stage 5 is built on #13 (server, CLI demo and the [choosing guide](docs/tool-resource-or-prompt.md)) and not yet merged. Stages 6–11 are the plan, not a promise of exact detail.
