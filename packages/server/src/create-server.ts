@@ -8,10 +8,13 @@ import { registerCatalog } from './catalog.js';
 // below becomes a normal `isError: true` tool result with its own message.
 // OPEN_METEO_URL exists so the failure paths can be exercised against a local
 // stub server; it defaults to the real API.
-const OPEN_METEO_URL = process.env.OPEN_METEO_URL ?? 'https://api.open-meteo.com/v1/forecast';
-const FETCH_TIMEOUT_MS = 8000;
+// The URL, timeout and backoff are read when a call starts (not at import), so
+// tests can shorten them per test through environment variables. The defaults
+// are the real values.
 const MAX_RETRIES = 2;
-const RETRY_BASE_DELAY_MS = 300;
+const openMeteoUrl = () => process.env.OPEN_METEO_URL ?? 'https://api.open-meteo.com/v1/forecast';
+const fetchTimeoutMs = () => Number(process.env.WEATHER_FETCH_TIMEOUT_MS ?? 8000);
+const retryBaseDelayMs = () => Number(process.env.WEATHER_RETRY_BASE_DELAY_MS ?? 300);
 
 // Validates the reply instead of trusting its shape: if Open-Meteo changes
 // its format (or a proxy returns an HTML error page), we want a clear error,
@@ -40,8 +43,9 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 
 // `callerSignal` is the MCP request's own signal: it fires when the client
 // cancels the call, so we stop hitting the upstream API on their behalf.
-async function fetchWeather(latitude: number, longitude: number, callerSignal: AbortSignal): Promise<WeatherResult> {
-  const url = `${OPEN_METEO_URL}?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,wind_speed_10m`;
+export async function fetchWeather(latitude: number, longitude: number, callerSignal: AbortSignal): Promise<WeatherResult> {
+  const timeoutMs = fetchTimeoutMs();
+  const url = `${openMeteoUrl()}?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,wind_speed_10m`;
   let lastFailure = '';
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -57,7 +61,7 @@ async function fetchWeather(latitude: number, longitude: number, callerSignal: A
     const timer = setTimeout(() => {
       timedOut = true;
       timeoutController.abort();
-    }, FETCH_TIMEOUT_MS);
+    }, timeoutMs);
 
     try {
       const signal = AbortSignal.any([callerSignal, timeoutController.signal]);
@@ -90,14 +94,14 @@ async function fetchWeather(latitude: number, longitude: number, callerSignal: A
     } catch (error) {
       if (callerSignal.aborted) return { ok: false, message: 'Weather request was cancelled' };
       lastFailure = timedOut
-        ? `Open-Meteo did not respond within ${FETCH_TIMEOUT_MS / 1000}s`
+        ? `Open-Meteo did not respond within ${timeoutMs / 1000}s`
         : `Failed to reach Open-Meteo: ${(error as Error).message}`;
     } finally {
       clearTimeout(timer);
     }
 
     if (attempt < MAX_RETRIES) {
-      const delay = RETRY_BASE_DELAY_MS * 2 ** attempt;
+      const delay = retryBaseDelayMs() * 2 ** attempt;
       console.error(`[mcp-demo] get_weather attempt ${attempt + 1} failed (${lastFailure}); retrying in ${delay}ms`);
       await sleep(delay, callerSignal);
     }
