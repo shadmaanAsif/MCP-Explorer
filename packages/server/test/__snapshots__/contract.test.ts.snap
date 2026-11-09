@@ -1,0 +1,248 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`public contract > prompts 1`] = `
+[
+  {
+    "arguments": [
+      {
+        "description": "First city",
+        "name": "cityA",
+        "required": true,
+      },
+      {
+        "description": "Second city",
+        "name": "cityB",
+        "required": true,
+      },
+    ],
+    "description": "Asks the model to fetch and compare current weather for two known cities.",
+    "name": "compare_weather",
+  },
+  {
+    "arguments": [
+      {
+        "description": "City to report on",
+        "name": "city",
+        "required": true,
+      },
+      {
+        "description": "One of: brief, detailed",
+        "name": "style",
+        "required": true,
+      },
+    ],
+    "description": "Asks the model for a short or detailed weather report for a known city.",
+    "name": "weather_report",
+  },
+]
+`;
+
+exports[`public contract > resources and templates 1`] = `
+{
+  "resourceTemplates": [
+    {
+      "mimeType": "application/json",
+      "name": "city",
+      "uriTemplate": "weather://city/{name}",
+    },
+  ],
+  "resources": [
+    {
+      "mimeType": "application/json",
+      "name": "home",
+      "uri": "session://home",
+    },
+    {
+      "mimeType": "application/json",
+      "name": "cities",
+      "uri": "weather://cities",
+    },
+    {
+      "mimeType": "application/json",
+      "name": "Delhi",
+      "uri": "weather://city/delhi",
+    },
+    {
+      "mimeType": "application/json",
+      "name": "Dubai",
+      "uri": "weather://city/dubai",
+    },
+    {
+      "mimeType": "application/json",
+      "name": "London",
+      "uri": "weather://city/london",
+    },
+    {
+      "mimeType": "application/json",
+      "name": "New York",
+      "uri": "weather://city/new-york",
+    },
+    {
+      "mimeType": "application/json",
+      "name": "Tokyo",
+      "uri": "weather://city/tokyo",
+    },
+  ],
+}
+`;
+
+exports[`public contract > tools 1`] = `
+[
+  {
+    "description": "Adds two numbers together and returns their sum.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "a": {
+          "description": "The first number",
+          "type": "number",
+        },
+        "b": {
+          "description": "The second number",
+          "type": "number",
+        },
+      },
+      "required": [
+        "a",
+        "b",
+      ],
+      "type": "object",
+    },
+    "name": "add",
+    "title": "Add two numbers",
+  },
+  {
+    "description": "Divides a by b and returns the quotient. Rejects division by zero.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "a": {
+          "description": "The numerator",
+          "type": "number",
+        },
+        "b": {
+          "description": "The denominator (must not be zero)",
+          "type": "number",
+        },
+      },
+      "required": [
+        "a",
+        "b",
+      ],
+      "type": "object",
+    },
+    "name": "divide",
+    "title": "Divide two numbers",
+  },
+  {
+    "description": "Fetches current weather for the location saved by set_home_location in this session.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {},
+      "type": "object",
+    },
+    "name": "get_home_weather",
+    "title": "Get weather for the remembered home location",
+  },
+  {
+    "description": "Fetches current temperature and wind speed for a latitude/longitude from Open-Meteo.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "latitude": {
+          "description": "Latitude in decimal degrees",
+          "maximum": 90,
+          "minimum": -90,
+          "type": "number",
+        },
+        "longitude": {
+          "description": "Longitude in decimal degrees",
+          "maximum": 180,
+          "minimum": -180,
+          "type": "number",
+        },
+      },
+      "required": [
+        "latitude",
+        "longitude",
+      ],
+      "type": "object",
+    },
+    "name": "get_weather",
+    "title": "Get current weather",
+  },
+  {
+    "description": "Fetches current weather for up to 5 named locations, reporting progress after each one.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "locations": {
+          "items": {
+            "properties": {
+              "latitude": {
+                "maximum": 90,
+                "minimum": -90,
+                "type": "number",
+              },
+              "longitude": {
+                "maximum": 180,
+                "minimum": -180,
+                "type": "number",
+              },
+              "name": {
+                "description": "A label for the place, used in the results",
+                "type": "string",
+              },
+            },
+            "required": [
+              "name",
+              "latitude",
+              "longitude",
+            ],
+            "type": "object",
+          },
+          "maxItems": 5,
+          "minItems": 1,
+          "type": "array",
+        },
+      },
+      "required": [
+        "locations",
+      ],
+      "type": "object",
+    },
+    "name": "get_weather_batch",
+    "title": "Get current weather for several places",
+  },
+  {
+    "description": "Stores a home location for this session so get_home_weather needs no arguments. Only persists across calls when the server runs in stateful mode.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "latitude": {
+          "maximum": 90,
+          "minimum": -90,
+          "type": "number",
+        },
+        "longitude": {
+          "maximum": 180,
+          "minimum": -180,
+          "type": "number",
+        },
+        "name": {
+          "description": "A label for the place",
+          "type": "string",
+        },
+      },
+      "required": [
+        "name",
+        "latitude",
+        "longitude",
+      ],
+      "type": "object",
+    },
+    "name": "set_home_location",
+    "title": "Remember a home location",
+  },
+]
+`;
