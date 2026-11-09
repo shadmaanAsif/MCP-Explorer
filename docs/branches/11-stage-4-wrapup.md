@@ -20,7 +20,7 @@ The retry lives in `mcp-client.ts` because that file owns the cache, so the rese
 
 - **Server restarted and back up:** the first request sends the stale id, the server answers 404, `withClient` reconnects and retries, and the user sees nothing.
 - **Server down:** `fetch failed` has no 404 code, so it is rethrown. The dashboard shows an error until the server is back.
-- **State is lost on a restart.** A `home` location set before the restart is gone afterwards, and nothing says so. Keeping sessions across restarts needs a store (Stage 9).
+- **State is lost on a restart.** A `home` location set before the restart is gone afterwards, and nothing says so. Keeping sessions across restarts needs a store (Stage 11).
 
 ## Limits
 

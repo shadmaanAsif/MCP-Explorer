@@ -76,14 +76,16 @@ flowchart LR
     S3 --> S4["Stage 4<br/>Error handling, real-time<br/>+ stateful HTTP"]
     S4 --> S5["Stage 5<br/>Resources, prompts<br/>+ completions"]
     S5 --> S6["Stage 6<br/>Testing + CI"]
-    S6 --> S7["Stage 7<br/>Authentication"]
-    S7 --> S8["Stage 8<br/>Authorization<br/>+ hardening"]
-    S8 --> S9["Stage 9<br/>Persistence<br/>+ scaling"]
-    S9 --> S10["Stage 10<br/>Observability"]
-    S10 --> S11["Stage 11<br/>Containerize<br/>+ deploy"]
+    S6 --> S7["Stage 7<br/>HTTP framework<br/>(Hono)"]
+    S7 --> S8["Stage 8<br/>Code review<br/>server"]
+    S8 --> S9["Stage 9<br/>Authentication"]
+    S9 --> S10["Stage 10<br/>Authorization<br/>+ hardening"]
+    S10 --> S11["Stage 11<br/>Persistence<br/>+ scaling"]
+    S11 --> S12["Stage 12<br/>Observability"]
+    S12 --> S13["Stage 13<br/>Containerize<br/>+ deploy"]
 ```
 
-Stages 1–4 build the server; **Stages 5–11 are the enterprise track** — what separates a demo server from one a team can run in production.
+Stages 1–6 build and test the server; Stages 7–8 give it a proper HTTP layer and a real use case; **Stages 9–13 are the enterprise track** — what separates a demo server from one a team can run in production.
 
 1. **Stage 1 — Basic server + one trivial tool** *(on `main`)*
    A server exists, and it can do exactly one thing (`add`). Goal: understand server / tool / transport as separate concepts.
@@ -105,28 +107,36 @@ Stages 1–4 build the server; **Stages 5–11 are the enterprise track** — wh
    Tools are one of three server primitives. Add **resources** (read-only data a client can attach, addressed by URI) and **prompts** (reusable templates the user picks), plus argument completion. Goal: know which primitive fits which job instead of making everything a tool.
    Details: [#13](docs/branches/13-stage-5-resources-prompts.md)
 
-6. **Stage 6 — Testing & CI** *(built, not yet merged)*
+6. **Stage 6 — Testing & CI** *(built and merged)*
    Unit-test tools, integration-test the server through an in-memory transport and through real HTTP, add contract checks on tool schemas, and run it all in GitHub Actions on every PR. Goal: change a server safely before it has real users.
    Details: [#14](docs/branches/14-stage-6-testing-ci.md)
 
-7. **Stage 7 — Authentication**
+7. **Stage 7 — HTTP framework (Hono)**
+   Replace the hand-rolled `node:http` entry in `http.ts` (manual body parsing, routing, error handling) with **Hono** (via `@hono/node-server`, bridging to the SDK transport). The session map, idle sweep and transports stay as they are; only the HTTP layer changes. Goal: a typed router and middleware to build the later stages on, with the stage 6 tests proving nothing changed.
+   Branch: `0N-stage-7-http-framework`
+
+8. **Stage 8 — Code review server**
+   A real use case on top of the server: a `review_code` **prompt** (the checklist the user picks), read-only **tools** that fetch what the model needs (`get_diff`, `read_file`), repo files as **resources**, and one extra tool, `run_checks` (lint / typecheck / tests), that streams progress and supports cancel. The client's model does the reviewing; the server only supplies context. Goal: apply the three primitives to a job none of them fits alone. (MCP sampling, where the server asks the client's model, is a possible follow-up.)
+   Branch: `0N-stage-8-code-review`
+
+9. **Stage 9 — Authentication**
    Protect `/mcp` per the MCP authorization spec: the server acts as an OAuth 2.1 *resource server*, validates bearer tokens (JWT signature, issuer, audience, expiry), returns `401` with `WWW-Authenticate`, and serves protected-resource metadata so clients can discover the auth server. Goal: know who is calling.
-   Branch: `0N-stage-7-authentication`
+   Branch: `0N-stage-9-authentication`
 
-8. **Stage 8 — Authorization & security hardening**
+10. **Stage 10 — Authorization & security hardening**
    Per-tool permissions from token scopes, per-user/tenant data isolation, `Origin` validation (DNS rebinding), rate limiting, request size limits, output sanitization, secret management, and an audit log of every tool call. Goal: know what each caller may do, and be able to prove what they did.
-   Branch: `0N-stage-8-authorization-hardening`
+   Branch: `0N-stage-10-authorization-hardening`
 
-9. **Stage 9 — Persistence & horizontal scaling**
+11. **Stage 11 — Persistence & horizontal scaling**
    Replace the in-memory session map with a shared store (e.g. Redis), add resumable streams (`Last-Event-ID` with an event store), and run several instances behind a load balancer. Goal: survive restarts and scale out without losing sessions.
-   Branch: `0N-stage-9-persistence-scaling`
+   Branch: `0N-stage-11-persistence-scaling`
 
-10. **Stage 10 — Observability & operations**
+12. **Stage 12 — Observability & operations**
     Structured logs with a request/session id, OpenTelemetry traces across tool calls and upstream APIs, metrics (latency, error rate, active sessions), health/readiness endpoints, timeouts, cancellation, and graceful shutdown. Goal: see what the server is doing in production, and stop it without dropping work.
-    Branch: `0N-stage-10-observability`
+    Branch: `0N-stage-12-observability`
 
-11. **Stage 11 — Containerize & deploy**
+13. **Stage 13 — Containerize & deploy**
     Dockerfile, environment-based config, a CI/CD pipeline to a real host, a gateway/reverse proxy (TLS, no SSE buffering), and a versioning and deprecation policy for tools. Goal: ship it, update it, and roll it back.
-    Branch: `0N-stage-11-containerize-deploy`
+    Branch: `0N-stage-13-containerize-deploy`
 
-**Where we are:** Stages 1–5 are implemented and merged, along with side explorations #2, #3 and #6–#9. Stage 6 is built on #14 (56 tests and a CI workflow) and not yet merged. Stages 7–11 are the plan, not a promise of exact detail.
+**Where we are:** Stages 1–6 are implemented and merged, along with side explorations #2, #3 and #6–#9. Stage 6 landed on #14 (56 tests and a CI workflow that passes on GitHub). Stages 7–13 are the plan, not a promise of exact detail.

@@ -38,4 +38,4 @@ The Inspector and Cursor can use either transport. Step by step: [connecting-cli
 ## Notes
 
 - A running HTTP server does not pick up a rebuild. Restart it.
-- Only plain `http://` is served. HTTPS needs something in front of it (a reverse proxy or tunnel); TLS is planned for Stage 11.
+- Only plain `http://` is served. HTTPS needs something in front of it (a reverse proxy or tunnel); TLS is planned for Stage 13.
