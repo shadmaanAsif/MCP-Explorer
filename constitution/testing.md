@@ -1,5 +1,7 @@
 # Testing / verifying a change
 
+**Automated tests:** `pnpm test` (Vitest, no server needed) runs 56 tests: unit, in-memory integration, real-HTTP integration and a schema snapshot. Run it after any server change. If the contract snapshot fails on an intended change, update it with `pnpm exec vitest run -u`. The manual recipes below are for exploring behaviour the tests don't cover. Details: [docs/branches/14-stage-6-testing-ci.md](../docs/branches/14-stage-6-testing-ci.md).
+
 ## Minimal checklist to actually test a change
 
 1. `pnpm build` — after any edit, before trying to run anything. This builds both workspace packages (`packages/server` and `packages/client`).

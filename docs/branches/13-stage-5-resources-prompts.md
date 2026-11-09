@@ -1,6 +1,6 @@
 # #13 — Stage 5: resources, prompts and completions (`13-stage-5-resources-prompts`)
 
-**Status:** built. The server, the CLI client demo and the choosing guide are done. Not yet merged.
+**Status:** built. The server, the CLI client demo and the choosing guide are done. Merged in PR 13.
 
 ## What it does
 

@@ -61,6 +61,7 @@ Every branch gets a global sequence number, and every numbered branch has its ow
 | 11 | [`11-stage-4-wrapup`](docs/branches/11-stage-4-wrapup.md) | Stage 4: the dashboard reconnects after a server restart. |
 | 12 | [`12-stage-4-verify-docs`](docs/branches/12-stage-4-verify-docs.md) | Stage 4: verified cancel and idle sweep, added the dashboard Cancel button. |
 | 13 | [`13-stage-5-resources-prompts`](docs/branches/13-stage-5-resources-prompts.md) | Stage 5: resources, prompts and argument completion, a CLI demo, and a [tool vs resource vs prompt guide](docs/tool-resource-or-prompt.md). |
+| 14 | [`14-stage-6-testing-ci`](docs/branches/14-stage-6-testing-ci.md) | Stage 6: Vitest unit, in-memory and HTTP integration tests, a schema snapshot, and a GitHub Actions workflow. |
 
 > **Branch numbering:** every new branch — a numbered stage or a side exploration — gets the next global sequence number (`NN-description`), so the branch list alone shows true creation order, not just which stages happen to be numbered. `stage-1-basic-server` and `explore-mcp-client` predate the convention (they are #1 and #2) and keep their original names. #3 turned out to be a side exploration rather than Stage 2, which is why the counter is global and does not reserve numbers for stages in advance. Adding a branch means adding its file in `docs/branches/` and a row to the table above.
 
@@ -100,13 +101,13 @@ Stages 1–4 build the server; **Stages 5–11 are the enterprise track** — wh
    Harden the server against failures (bad responses, timeouts, partial data), add a tool that reports progress while it runs, and add **stateful Streamable HTTP** — an `Mcp-Session-Id` issued on `initialize`, a map of live sessions, one `McpServer` per session. Goal: go from "it works when everything goes right" to "it behaves sensibly when it doesn't," and see why sessions exist at all.
    Details: [#10](docs/branches/10-stage-4-error-handling-realtime.md), [#11](docs/branches/11-stage-4-wrapup.md), [#12](docs/branches/12-stage-4-verify-docs.md)
 
-5. **Stage 5 — Resources, prompts & completions** *(built, not yet merged)*
+5. **Stage 5 — Resources, prompts & completions** *(built and merged)*
    Tools are one of three server primitives. Add **resources** (read-only data a client can attach, addressed by URI) and **prompts** (reusable templates the user picks), plus argument completion. Goal: know which primitive fits which job instead of making everything a tool.
    Details: [#13](docs/branches/13-stage-5-resources-prompts.md)
 
-6. **Stage 6 — Testing & CI**
+6. **Stage 6 — Testing & CI** *(built, not yet merged)*
    Unit-test tools, integration-test the server through an in-memory transport and through real HTTP, add contract checks on tool schemas, and run it all in GitHub Actions on every PR. Goal: change a server safely before it has real users.
-   Branch: `0N-stage-6-testing-ci`
+   Details: [#14](docs/branches/14-stage-6-testing-ci.md)
 
 7. **Stage 7 — Authentication**
    Protect `/mcp` per the MCP authorization spec: the server acts as an OAuth 2.1 *resource server*, validates bearer tokens (JWT signature, issuer, audience, expiry), returns `401` with `WWW-Authenticate`, and serves protected-resource metadata so clients can discover the auth server. Goal: know who is calling.
@@ -128,4 +129,4 @@ Stages 1–4 build the server; **Stages 5–11 are the enterprise track** — wh
     Dockerfile, environment-based config, a CI/CD pipeline to a real host, a gateway/reverse proxy (TLS, no SSE buffering), and a versioning and deprecation policy for tools. Goal: ship it, update it, and roll it back.
     Branch: `0N-stage-11-containerize-deploy`
 
-**Where we are:** Stages 1–4 are implemented and merged, along with side explorations #2, #3 and #6–#9. Stage 5 is built on #13 (server, CLI demo and the [choosing guide](docs/tool-resource-or-prompt.md)) and not yet merged. Stages 6–11 are the plan, not a promise of exact detail.
+**Where we are:** Stages 1–5 are implemented and merged, along with side explorations #2, #3 and #6–#9. Stage 6 is built on #14 (56 tests and a CI workflow) and not yet merged. Stages 7–11 are the plan, not a promise of exact detail.

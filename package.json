@@ -2,7 +2,7 @@
   "name": "mcp-explorer",
   "private": true,
   "version": "0.1.0",
-  "description": "A learning project: building an MCP server one stage at a time \u2014 a monorepo with separate server and client packages.",
+  "description": "A learning project: building an MCP server one stage at a time — a monorepo with separate server and client packages.",
   "scripts": {
     "build": "pnpm -r --if-present run build",
     "start": "pnpm --filter @mcp-explorer/server start",
@@ -10,11 +10,14 @@
     "dev": "pnpm build && pnpm start",
     "client": "pnpm --filter @mcp-explorer/client start",
     "web": "pnpm --filter @mcp-explorer/web build && pnpm --filter @mcp-explorer/web start",
-    "web:dev": "pnpm --filter @mcp-explorer/web dev"
+    "web:dev": "pnpm --filter @mcp-explorer/web dev",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
+    "@types/node": "^22.10.5",
     "typescript": "^7.0.2",
-    "@types/node": "^22.10.5"
+    "vitest": "^5.1.0"
   },
   "packageManager": "pnpm@12.8.1"
 }
