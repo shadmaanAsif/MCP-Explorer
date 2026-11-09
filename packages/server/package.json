@@ -10,7 +10,9 @@
     "start:http": "node build/http.js"
   },
   "dependencies": {
+    "@hono/node-server": "^2.1.5",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "hono": "^4.13.14",
     "zod": "^4.6.1"
   }
 }
