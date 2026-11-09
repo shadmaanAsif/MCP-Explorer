@@ -241,3 +241,36 @@ describe('stateless mode', () => {
     }
   });
 });
+
+// The HTTP layer is Hono (Stage 7): these cover what only the router and its
+// middleware do, in both modes.
+describe.each(['stateful', 'stateless'] as const)('HTTP layer (%s)', (mode) => {
+  let server: HttpServer;
+  beforeAll(async () => {
+    server = await startHttpServer({ ...weatherEnv(), MCP_MODE: mode });
+  });
+  afterAll(() => server.stop());
+
+  it('answers an unknown path with an empty 404', async () => {
+    const res = await fetch(server.url.replace('/mcp', '/nope'), { method: 'GET' });
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe('');
+  });
+
+  it('answers a malformed JSON body with a JSON-RPC 500 and keeps serving', async () => {
+    const bad = await fetch(server.url, { method: 'POST', headers: JSON_HEADERS, body: '{not json' });
+    expect(bad.status).toBe(500);
+    expect(await bad.json()).toMatchObject({ jsonrpc: '2.0', error: { code: -32603 } });
+
+    const { client } = await connect(server.url);
+    expect(textOf(await client.callTool({ name: 'add', arguments: { a: 1, b: 2 } }))).toBe('3');
+    await client.close();
+  });
+
+  it('logs every request through the middleware', async () => {
+    const { client } = await connect(server.url);
+    await client.listTools();
+    await client.close();
+    expect(server.logs()).toMatch(/POST \/mcp 200 \d+ms/);
+  });
+});
