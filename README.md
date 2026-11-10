@@ -62,6 +62,7 @@ Every branch gets a global sequence number, and every numbered branch has its ow
 | 12 | [`12-stage-4-verify-docs`](docs/branches/12-stage-4-verify-docs.md) | Stage 4: verified cancel and idle sweep, added the dashboard Cancel button. |
 | 13 | [`13-stage-5-resources-prompts`](docs/branches/13-stage-5-resources-prompts.md) | Stage 5: resources, prompts and argument completion, a CLI demo, and a [tool vs resource vs prompt guide](docs/tool-resource-or-prompt.md). |
 | 14 | [`14-stage-6-testing-ci`](docs/branches/14-stage-6-testing-ci.md) | Stage 6: Vitest unit, in-memory and HTTP integration tests, a schema snapshot, and a GitHub Actions workflow. |
+| 15 | [`15-stage-7-http-framework`](docs/branches/15-stage-7-http-framework.md) | Stage 7: the HTTP entry point moves from hand-written `node:http` to Hono, with the same behaviour. |
 
 > **Branch numbering:** every new branch — a numbered stage or a side exploration — gets the next global sequence number (`NN-description`), so the branch list alone shows true creation order, not just which stages happen to be numbered. `stage-1-basic-server` and `explore-mcp-client` predate the convention (they are #1 and #2) and keep their original names. #3 turned out to be a side exploration rather than Stage 2, which is why the counter is global and does not reserve numbers for stages in advance. Adding a branch means adding its file in `docs/branches/` and a row to the table above.
 
@@ -83,7 +84,14 @@ flowchart LR
     S10 --> S11["Stage 11<br/>Persistence<br/>+ scaling"]
     S11 --> S12["Stage 12<br/>Observability"]
     S12 --> S13["Stage 13<br/>Containerize<br/>+ deploy"]
+
+    classDef built fill:#d1fae5,stroke:#059669,color:#064e3b
+    classDef current fill:#fef3c7,stroke:#d97706,color:#78350f
+    class S1,S2,S3,S4,S5,S6 built
+    class S7 current
 ```
+
+Green = built and merged, amber = built on a branch, waiting for its PR. Unfilled stages are still planned.
 
 Stages 1–6 build and test the server; Stages 7–8 give it a proper HTTP layer and a real use case; **Stages 9–13 are the enterprise track** — what separates a demo server from one a team can run in production.
 
@@ -111,9 +119,9 @@ Stages 1–6 build and test the server; Stages 7–8 give it a proper HTTP layer
    Unit-test tools, integration-test the server through an in-memory transport and through real HTTP, add contract checks on tool schemas, and run it all in GitHub Actions on every PR. Goal: change a server safely before it has real users.
    Details: [#14](docs/branches/14-stage-6-testing-ci.md)
 
-7. **Stage 7 — HTTP framework (Hono)**
+7. **Stage 7 — HTTP framework (Hono)** *(built, not yet merged)*
    Replace the hand-rolled `node:http` entry in `http.ts` (manual body parsing, routing, error handling) with **Hono** (via `@hono/node-server`, bridging to the SDK transport). The session map, idle sweep and transports stay as they are; only the HTTP layer changes. Goal: a typed router and middleware to build the later stages on, with the stage 6 tests proving nothing changed.
-   Branch: `0N-stage-7-http-framework`
+   Details: [#15](docs/branches/15-stage-7-http-framework.md)
 
 8. **Stage 8 — Code review server**
    A real use case on top of the server: a `review_code` **prompt** (the checklist the user picks), read-only **tools** that fetch what the model needs (`get_diff`, `read_file`), repo files as **resources**, and one extra tool, `run_checks` (lint / typecheck / tests), that streams progress and supports cancel. The client's model does the reviewing; the server only supplies context. Goal: apply the three primitives to a job none of them fits alone. (MCP sampling, where the server asks the client's model, is a possible follow-up.)
@@ -139,4 +147,4 @@ Stages 1–6 build and test the server; Stages 7–8 give it a proper HTTP layer
     Dockerfile, environment-based config, a CI/CD pipeline to a real host, a gateway/reverse proxy (TLS, no SSE buffering), and a versioning and deprecation policy for tools. Goal: ship it, update it, and roll it back.
     Branch: `0N-stage-13-containerize-deploy`
 
-**Where we are:** Stages 1–6 are implemented and merged, along with side explorations #2, #3 and #6–#9. Stage 6 landed on #14 (56 tests and a CI workflow that passes on GitHub). Stages 7–13 are the plan, not a promise of exact detail.
+**Where we are:** Stages 1–6 are implemented and merged, along with side explorations #2, #3 and #6–#9. Stage 6 landed on #14 (56 tests and a CI workflow that passes on GitHub). Stage 7 (Hono) is built on #15 and waiting for its PR to merge (62 tests, same behaviour). Stages 8–13 are the plan, not a promise of exact detail.
