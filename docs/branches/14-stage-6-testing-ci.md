@@ -1,6 +1,6 @@
 # #14 — Stage 6: testing and CI (`14-stage-6-testing-ci`)
 
-**Status:** built, not yet merged. The GitHub Actions workflow has never run on GitHub, so it may need a fix after the first PR.
+**Status:** merged in PR 14. The CI workflow ran on GitHub: two runs on the PR branch passed (about 35s each), and a run on `main` followed. I did not read the job logs.
 
 ## What it does
 
@@ -23,7 +23,7 @@ Every check in Stages 1-5 was done by hand. This stage turns them into automated
 
 **Snapshot test:** the first run saves the output to [`__snapshots__/`](../../packages/server/test/__snapshots__/contract.test.ts.snap). Later runs fail if it changes, so a renamed tool or changed input field shows up in the PR. If the change is intended, update it with `pnpm exec vitest run -u` and commit the new snapshot.
 
-**CI:** [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs on every PR and on pushes to `main`: `pnpm install --frozen-lockfile`, `pnpm build` (server, client and the web app), `pnpm test`, on Node 24.
+**CI:** [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs on every PR and on pushes to `main`: `pnpm install --frozen-lockfile`, `pnpm build` (server, client and the web app), `pnpm test`, on Node 24.22.2 (pinned; change it by hand when a Node security release comes out).
 
 ## How to run
 
@@ -45,6 +45,6 @@ No server needs to be running. The HTTP tests start their own on free ports.
 - No test has a model read a prompt.
 - Nothing runs against the real Open-Meteo API.
 - The cancel and idle-sweep tests use short real timers (600ms), so a slow CI runner could make them flaky.
-- The workflow YAML and `pnpm/action-setup` with pnpm 12 are unproven until the first run on GitHub.
+- The CI runs passed on GitHub, so the workflow YAML and `pnpm/action-setup` with pnpm 12 work. I haven't checked how often the 600ms-timer tests flake on the runner.
 
 Connecting clients: [docs/connecting-clients.md](../connecting-clients.md).

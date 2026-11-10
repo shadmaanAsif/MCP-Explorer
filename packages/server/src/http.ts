@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { serve } from '@hono/node-server';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
+import { Hono, type Context } from 'hono';
 import { createServer, type SessionState } from './create-server.js';
 
 const PORT = Number(process.env.PORT ?? 4768);
@@ -16,17 +17,53 @@ const SWEEP_INTERVAL_MS = Math.min(60_000, SESSION_TTL_MS);
 // stateless: a fresh McpServer + transport per request, nothing remembered.
 const MODE = process.env.MCP_MODE === 'stateless' ? 'stateless' : 'stateful';
 
-async function readJson(req: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+// Hono hands us a web-standard Request and expects a Response back, so the
+// MCP side uses the SDK's web-standard transport (the Node transport is a
+// wrapper around it).
+function jsonRpcError(c: Context, status: 400 | 404 | 500, code: number, message: string) {
+  return c.json({ jsonrpc: '2.0', error: { code, message }, id: null }, status);
 }
 
-function sendJsonRpcError(res: ServerResponse, status: number, code: number, message: string) {
-  if (res.headersSent) return;
-  res
-    .writeHead(status, { 'Content-Type': 'application/json' })
-    .end(JSON.stringify({ jsonrpc: '2.0', error: { code, message }, id: null }));
+// Runs `done` once the response body has been fully sent or the client went
+// away. Replaces `res.on('close')` from the node:http version: with a
+// web-standard Response there is no socket to listen on, only the stream.
+function afterBody(response: Response, done: () => void): Response {
+  if (!response.body) {
+    done();
+    return response;
+  }
+  const reader = response.body.getReader();
+  let finished = false;
+  const finish = () => {
+    if (!finished) {
+      finished = true;
+      done();
+    }
+  };
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done: end, value } = await reader.read();
+        if (end) {
+          controller.close();
+          finish();
+        } else {
+          controller.enqueue(value);
+        }
+      } catch (error) {
+        controller.error(error);
+        finish();
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        finish();
+      }
+    }
+  });
+  return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
 }
 
 // ---- stateless ----------------------------------------------------------
@@ -35,27 +72,26 @@ function sendJsonRpcError(res: ServerResponse, status: number, code: number, mes
 // undefined), so there is no session to track and the process can be
 // restarted or scaled freely. GET (server-initiated stream) and DELETE (end
 // session) only make sense with sessions.
-async function handleStateless(req: IncomingMessage, res: ServerResponse) {
-  if (req.method !== 'POST') {
-    res.writeHead(405, { Allow: 'POST' }).end();
-    return;
+async function handleStateless(c: Context) {
+  if (c.req.method !== 'POST') {
+    return c.body(null, 405, { Allow: 'POST' });
   }
-  const body = await readJson(req);
+  const body = await c.req.json();
   const server = createServer();
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-  res.on('close', () => {
-    transport.close();
-    server.close();
-  });
+  const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);
-  await transport.handleRequest(req, res, body);
+  const response = await transport.handleRequest(c.req.raw, { parsedBody: body });
+  return afterBody(response, () => {
+    void transport.close();
+    void server.close();
+  });
 }
 
 // ---- stateful -----------------------------------------------------------
 
 type Session = {
   server: McpServer;
-  transport: StreamableHTTPServerTransport;
+  transport: WebStandardStreamableHTTPServerTransport;
   state: SessionState;
   lastSeen: number;
 };
@@ -65,7 +101,7 @@ const sessions = new Map<string, Session>();
 async function createSession(): Promise<Session> {
   const state: SessionState = {};
   const server = createServer(state);
-  const transport = new StreamableHTTPServerTransport({
+  const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: randomUUID,
     // The id only exists once the initialize request is handled, so the
     // session is registered here, not before handleRequest.
@@ -83,40 +119,33 @@ async function createSession(): Promise<Session> {
   return session;
 }
 
-async function handleStateful(req: IncomingMessage, res: ServerResponse) {
-
-  const header = req.headers[SESSION_HEADER];
-  const sessionId = Array.isArray(header) ? header[0] : header;
+async function handleStateful(c: Context) {
+  const sessionId = c.req.header(SESSION_HEADER);
 
   if (sessionId) {
     const session = sessions.get(sessionId);
     if (!session) {
       // Spec: an unknown/expired id is 404, which tells the client to start
       // over with a new initialize.
-      sendJsonRpcError(res, 404, -32001, 'Session not found');
-      return;
+      return jsonRpcError(c, 404, -32001, 'Session not found');
     }
     session.lastSeen = Date.now();
     // POST (requests), GET (server → client stream), DELETE (end session)
     // are all handled by the session's own transport.
-    const body = req.method === 'POST' ? await readJson(req) : undefined;
-    // console.log('body111', body)
-    await session.transport.handleRequest(req, res, body);
-    return;
+    const body = c.req.method === 'POST' ? await c.req.json() : undefined;
+    return session.transport.handleRequest(c.req.raw, { parsedBody: body });
   }
 
   // No session id: the only valid request is a POST that opens a session.
-  if (req.method !== 'POST') {
-    sendJsonRpcError(res, 400, -32000, 'Mcp-Session-Id header is required');
-    return;
+  if (c.req.method !== 'POST') {
+    return jsonRpcError(c, 400, -32000, 'Mcp-Session-Id header is required');
   }
-  const body = await readJson(req);
+  const body = await c.req.json();
   if (!isInitializeRequest(body)) {
-    sendJsonRpcError(res, 400, -32000, 'Missing Mcp-Session-Id: send an initialize request first');
-    return;
+    return jsonRpcError(c, 400, -32000, 'Missing Mcp-Session-Id: send an initialize request first');
   }
   const session = await createSession();
-  await session.transport.handleRequest(req, res, body);
+  return session.transport.handleRequest(c.req.raw, { parsedBody: body });
 }
 
 // Clients that vanish without sending DELETE would otherwise leak sessions.
@@ -130,19 +159,31 @@ function sweepIdleSessions() {
   }
 }
 
+// ---- app ----------------------------------------------------------------
+
+const app = new Hono();
+
+// Middleware runs for every request, in order. Later stages add auth (Stage 9),
+// Origin checks and rate limits (Stage 10) and tracing (Stage 12) here.
+app.use('*', async (c, next) => {
+  const start = Date.now();
+  await next();
+  console.error(`[mcp-demo] ${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status} ${Date.now() - start}ms`);
+});
+
+app.all(MCP_PATH, (c) => (MODE === 'stateful' ? handleStateful(c) : handleStateless(c)));
+app.notFound((c) => c.body(null, 404));
+app.onError((error, c) => {
+  console.error('[mcp-demo] error handling request:', error);
+  return jsonRpcError(c, 500, -32603, 'Internal server error');
+});
+
 // ---- entry --------------------------------------------------------------
 
-const httpServer = createHttpServer(async (req, res) => {
-  if (req.url !== MCP_PATH) {
-    res.writeHead(404).end();
-    return;
-  }
-  try {
-    await (MODE === 'stateful' ? handleStateful(req, res) : handleStateless(req, res));
-  } catch (error) {
-    console.error('[mcp-demo] error handling request:', error);
-    sendJsonRpcError(res, 500, -32603, 'Internal server error');
-  }
+const httpServer = serve({ fetch: app.fetch, port: PORT }, () => {
+  // Safe to use console.log here, unlike the stdio entry: stdout isn't the
+  // protocol channel over HTTP. console.error kept for consistency.
+  console.error(`mcp-demo server running on http://localhost:${PORT}${MCP_PATH} (${MODE})`);
 });
 
 let sweeper: NodeJS.Timeout | undefined;
@@ -159,9 +200,3 @@ async function shutdown() {
 }
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
-
-httpServer.listen(PORT, () => {
-  // Safe to use console.log here, unlike the stdio entry: stdout isn't the
-  // protocol channel over HTTP. console.error kept for consistency.
-  console.error(`mcp-demo server running on http://localhost:${PORT}${MCP_PATH} (${MODE})`);
-});
