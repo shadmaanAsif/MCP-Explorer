@@ -319,11 +319,26 @@ async function runCheck(name: CheckName, root: string, callerSignal: AbortSignal
     const exitCode = await new Promise<number | null>((resolve, reject) => {
       // No shell, and only `pnpm run <known script>`: nothing from the caller
       // reaches the command line.
-      const child = spawn('pnpm', ['run', name], { cwd: root, signal, stdio: ['ignore', 'pipe', 'pipe'] });
+      // `detached` gives pnpm its own process group, so cancel and timeout can
+      // kill the script pnpm started too. Killing only pnpm leaves it running.
+      const child = spawn('pnpm', ['run', name], { cwd: root, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      const stop = () => {
+        try {
+          if (child.pid) process.kill(-child.pid, 'SIGTERM');
+        } catch {
+          child.kill('SIGTERM');
+        }
+        reject(new Error('stopped'));
+      };
+      if (signal.aborted) stop();
+      else signal.addEventListener('abort', stop, { once: true });
       child.stdout.on('data', collect);
       child.stderr.on('data', collect);
       child.on('error', reject);
-      child.on('close', (code) => resolve(code));
+      child.on('close', (code) => {
+        signal.removeEventListener('abort', stop);
+        resolve(code);
+      });
     });
     return { name, status: exitCode === 0 ? 'passed' : 'failed', exitCode, output: output.slice(-MAX_CHECK_OUTPUT_CHARS) };
   } catch (err) {
