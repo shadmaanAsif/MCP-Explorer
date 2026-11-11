@@ -1,6 +1,6 @@
 # #15 — Stage 7: HTTP framework, Hono (`15-stage-7-http-framework`)
 
-**Status:** built on this branch, PR not yet merged. It also carries a small docs cleanup (the Stage 6 wording and the roadmap renumbering after Stages 7 and 8 were inserted).
+**Status:** built and merged in PR 15. It also carries a small docs cleanup (the Stage 6 wording and the roadmap renumbering after Stages 7 and 8 were inserted).
 
 ## What it does
 
