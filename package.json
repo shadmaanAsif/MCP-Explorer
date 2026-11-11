@@ -11,6 +11,7 @@
     "client": "pnpm --filter @mcp-explorer/client start",
     "web": "pnpm --filter @mcp-explorer/web build && pnpm --filter @mcp-explorer/web start",
     "web:dev": "pnpm --filter @mcp-explorer/web dev",
+    "typecheck": "pnpm --filter @mcp-explorer/server --filter @mcp-explorer/client exec tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },
