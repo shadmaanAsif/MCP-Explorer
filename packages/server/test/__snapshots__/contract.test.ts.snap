@@ -21,6 +21,32 @@ exports[`public contract > prompts 1`] = `
   {
     "arguments": [
       {
+        "description": "One of: all, bugs, security, style, tests. Defaults to all",
+        "name": "focus",
+        "required": false,
+      },
+      {
+        "description": "Base ref to compare against. Defaults to the repo's default branch (develop, main or master)",
+        "name": "base",
+        "required": false,
+      },
+      {
+        "description": "Head ref to review. Defaults to HEAD",
+        "name": "head",
+        "required": false,
+      },
+      {
+        "description": "Absolute path of the project to review. Defaults to your open workspace folder",
+        "name": "root",
+        "required": false,
+      },
+    ],
+    "description": "Asks the model to review a branch using get_diff, read_file and run_checks.",
+    "name": "review_code",
+  },
+  {
+    "arguments": [
+      {
         "description": "City to report on",
         "name": "city",
         "required": true,
@@ -44,6 +70,11 @@ exports[`public contract > resources and templates 1`] = `
       "mimeType": "application/json",
       "name": "city",
       "uriTemplate": "weather://city/{name}",
+    },
+    {
+      "mimeType": "text/plain",
+      "name": "repo-file",
+      "uriTemplate": "repo://file/{+path}",
     },
   ],
   "resources": [
@@ -135,6 +166,35 @@ exports[`public contract > tools 1`] = `
     "title": "Divide two numbers",
   },
   {
+    "description": "Returns the changes on \`head\` since it diverged from \`base\` (git diff base...head) in the review repo. Read-only.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "base": {
+          "description": "Base ref, for example main",
+          "minLength": 1,
+          "type": "string",
+        },
+        "head": {
+          "default": "HEAD",
+          "description": "Head ref, for example a branch name. Defaults to HEAD",
+          "minLength": 1,
+          "type": "string",
+        },
+        "root": {
+          "description": "Absolute path of the project to review (your open workspace folder). Defaults to the server's own choice",
+          "type": "string",
+        },
+      },
+      "required": [
+        "base",
+      ],
+      "type": "object",
+    },
+    "name": "get_diff",
+    "title": "Get a git diff",
+  },
+  {
     "description": "Fetches current weather for the location saved by set_home_location in this session.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -213,6 +273,61 @@ exports[`public contract > tools 1`] = `
     },
     "name": "get_weather_batch",
     "title": "Get current weather for several places",
+  },
+  {
+    "description": "Returns the text of one file in the review repo. Read-only; paths outside the repo are refused.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "path": {
+          "description": "Path relative to the repo root, for example packages/server/src/http.ts",
+          "minLength": 1,
+          "type": "string",
+        },
+        "root": {
+          "description": "Absolute path of the project to review (your open workspace folder). Defaults to the server's own choice",
+          "type": "string",
+        },
+      },
+      "required": [
+        "path",
+      ],
+      "type": "object",
+    },
+    "name": "read_file",
+    "title": "Read a repo file",
+  },
+  {
+    "description": "Runs named checks (pnpm run build / test / typecheck) in the review repo, one after another, and reports progress after each. Cancel stops the running check.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "checks": {
+          "description": "Which checks to run, in order",
+          "items": {
+            "enum": [
+              "build",
+              "test",
+              "typecheck",
+            ],
+            "type": "string",
+          },
+          "maxItems": 3,
+          "minItems": 1,
+          "type": "array",
+        },
+        "root": {
+          "description": "Absolute path of the project to review (your open workspace folder). Defaults to the server's own choice",
+          "type": "string",
+        },
+      },
+      "required": [
+        "checks",
+      ],
+      "type": "object",
+    },
+    "name": "run_checks",
+    "title": "Run project checks",
   },
   {
     "description": "Stores a home location for this session so get_home_weather needs no arguments. Only persists across calls when the server runs in stateful mode.",

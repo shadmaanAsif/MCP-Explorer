@@ -1,3 +1,6 @@
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -272,5 +275,188 @@ describe.each(['stateful', 'stateless'] as const)('HTTP layer (%s)', (mode) => {
     await client.listTools();
     await client.close();
     expect(server.logs()).toMatch(/POST \/mcp 200 \d+ms/);
+  });
+});
+
+// Stage 8: run_checks starts a real child process, so cancel matters twice
+// over here. A cancel only reaches the running call when the session keeps one
+// server (stateful); in stateless mode the check runs to its natural end.
+describe.each([
+  { mode: 'stateful', cancelStops: true },
+  { mode: 'stateless', cancelStops: false }
+] as const)('run_checks cancel over HTTP (%s)', ({ mode, cancelStops }) => {
+  let server: HttpServer;
+  let repo: string;
+  beforeAll(async () => {
+    repo = mkdtempSync(path.join(tmpdir(), 'review-http-'));
+    writeFileSync(path.join(repo, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { build: 'node slow.js' } }));
+    // Records its pid, then finishes by itself after 1.5s and leaves a marker.
+    writeFileSync(
+      path.join(repo, 'slow.js'),
+      "const fs=require('fs');fs.writeFileSync('pid.txt',String(process.pid));setTimeout(()=>fs.writeFileSync('done.txt','done'),1500);"
+    );
+    server = await startHttpServer({ ...weatherEnv(), MCP_MODE: mode, REVIEW_ROOT: repo, REVIEW_ALLOW_HTTP: '1' });
+  });
+  afterAll(async () => {
+    await server.stop();
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  it(cancelStops ? 'stops the running check' : 'cannot stop the running check: it finishes on its own', async () => {
+    rmSync(path.join(repo, 'pid.txt'), { force: true });
+    rmSync(path.join(repo, 'done.txt'), { force: true });
+    const { client } = await connect(server.url);
+    try {
+      const controller = new AbortController();
+      const call = client
+        .callTool({ name: 'run_checks', arguments: { checks: ['build'] } }, undefined, { signal: controller.signal })
+        .catch((e) => e);
+      await expect.poll(() => existsSync(path.join(repo, 'pid.txt')), { timeout: 5000 }).toBe(true);
+      controller.abort();
+      await call;
+      await sleep(2200); // longer than the check's own 1.5s
+      expect(existsSync(path.join(repo, 'done.txt'))).toBe(!cancelStops);
+      if (cancelStops) {
+        const pid = Number(readFileSync(path.join(repo, 'pid.txt'), 'utf8'));
+        expect(() => process.kill(pid, 0)).toThrow(); // the process is gone
+      }
+    } finally {
+      await client.close().catch(() => {});
+    }
+  });
+});
+
+// A shared HTTP server must not guess which repo to review: with no project
+// named, review tools fail unless the operator opts out.
+describe('review tools on a shared HTTP server (admin opted in)', () => {
+  let repo: string;
+  beforeAll(() => {
+    repo = mkdtempSync(path.join(tmpdir(), 'review-shared-'));
+    writeFileSync(path.join(repo, 'hello.txt'), 'hello from the named project\n');
+  });
+  afterAll(() => rmSync(repo, { recursive: true, force: true }));
+
+  const baseEnv = () => {
+    const env = { ...weatherEnv(), MCP_MODE: 'stateful', REVIEW_ALLOW_HTTP: '1' } as Record<string, string>;
+    // The child inherits this process's env; make sure no pin leaks in.
+    return { ...env, REVIEW_ROOT: '', REVIEW_ALLOWED_ROOTS: '', REVIEW_REQUIRE_ROOT: '' };
+  };
+
+  async function readFile(server: HttpServer, args: Record<string, unknown>) {
+    const { client } = await connect(server.url);
+    try {
+      return await client.callTool({ name: 'read_file', arguments: { path: 'hello.txt', ...args } });
+    } finally {
+      await client.close().catch(() => {});
+    }
+  }
+  const isErr = (r: unknown) => (r as { isError?: boolean }).isError === true;
+
+  it('refuses a call that names no project (the default)', async () => {
+    const env = baseEnv();
+    delete (env as Record<string, string | undefined>).REVIEW_REQUIRE_ROOT;
+    delete (env as Record<string, string | undefined>).REVIEW_ROOT;
+    delete (env as Record<string, string | undefined>).REVIEW_ALLOWED_ROOTS;
+    const server = await startHttpServer(env);
+    try {
+      const r = await readFile(server, {});
+      expect(isErr(r)).toBe(true);
+      expect(textOf(r)).toContain('Pass `root`');
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('serves the project the call names', async () => {
+    const env = baseEnv();
+    delete (env as Record<string, string | undefined>).REVIEW_REQUIRE_ROOT;
+    delete (env as Record<string, string | undefined>).REVIEW_ROOT;
+    delete (env as Record<string, string | undefined>).REVIEW_ALLOWED_ROOTS;
+    const server = await startHttpServer(env);
+    try {
+      const r = await readFile(server, { root: repo });
+      expect(isErr(r)).toBe(false);
+      expect(textOf(r)).toContain('hello from the named project');
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('allows the start-folder fallback when REVIEW_REQUIRE_ROOT=0', async () => {
+    const env = { ...baseEnv(), REVIEW_REQUIRE_ROOT: '0' };
+    delete (env as Record<string, string | undefined>).REVIEW_ROOT;
+    delete (env as Record<string, string | undefined>).REVIEW_ALLOWED_ROOTS;
+    const server = await startHttpServer(env);
+    try {
+      // hello.txt is not in the server's own repo, so this is "not found",
+      // not "no project": the fallback ran.
+      const r = await readFile(server, {});
+      expect(isErr(r)).toBe(true);
+      expect(textOf(r)).not.toContain('Pass `root`');
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+// By default the HTTP server refuses the review tools, because they read the
+// server's disk and not the client's project.
+describe('review tools over HTTP by default', () => {
+  let server: HttpServer;
+  const refusal = /not available over HTTP[\s\S]*stdio[\s\S]*ask the server admin[\s\S]*REVIEW_ALLOW_HTTP=1/;
+  beforeAll(async () => {
+    const env = { ...weatherEnv(), MCP_MODE: 'stateful' } as Record<string, string | undefined>;
+    server = await startHttpServer(env as Record<string, string>);
+  });
+  afterAll(() => server.stop());
+
+  const call = async (name: string, args: Record<string, unknown>) => {
+    const { client } = await connect(server.url);
+    try {
+      return await client.callTool({ name, arguments: args });
+    } finally {
+      await client.close().catch(() => {});
+    }
+  };
+
+  it.each([
+    ['get_diff', { base: 'main' }],
+    ['read_file', { path: 'package.json' }],
+    ['run_checks', { checks: ['test'] }]
+  ] as const)('%s returns a clear error that names stdio and the admin', async (name, args) => {
+    const r = await call(name, { ...args });
+    expect((r as { isError?: boolean }).isError).toBe(true);
+    expect(textOf(r)).toMatch(refusal);
+  });
+
+  it('refuses even when the call names a root, and starts no process', async () => {
+    const r = await call('run_checks', { checks: ['test'], root: process.cwd() });
+    expect((r as { isError?: boolean }).isError).toBe(true);
+    expect(textOf(r)).toMatch(refusal);
+  });
+
+  it('the prompt fails with the same message', async () => {
+    const { client } = await connect(server.url);
+    try {
+      await expect(client.getPrompt({ name: 'review_code', arguments: { focus: 'bugs' } })).rejects.toThrow(refusal);
+    } finally {
+      await client.close().catch(() => {});
+    }
+  });
+
+  it('the resource lists nothing and reading it fails with the same message', async () => {
+    const { client } = await connect(server.url);
+    try {
+      const listed = await client.listResources();
+      expect(listed.resources.filter((r) => r.uri.startsWith('repo://'))).toEqual([]);
+      await expect(client.readResource({ uri: 'repo://file/package.json' })).rejects.toThrow(refusal);
+    } finally {
+      await client.close().catch(() => {});
+    }
+  });
+
+  it('the weather tools still work on the same server', async () => {
+    const r = await call('add', { a: 2, b: 3 });
+    expect(textOf(r)).toBe('5');
   });
 });

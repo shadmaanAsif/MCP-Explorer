@@ -180,6 +180,13 @@ app.onError((error, c) => {
 
 // ---- entry --------------------------------------------------------------
 
+// The review tools read this machine's disk, so over HTTP they refuse unless an
+// admin opts in (REVIEW_ALLOW_HTTP=1). When allowed, a shared server also has
+// no meaningful start folder, so a call must name its project; set
+// REVIEW_REQUIRE_ROOT=0 to allow the fallback.
+process.env.REVIEW_TRANSPORT = 'http';
+process.env.REVIEW_REQUIRE_ROOT ??= '1';
+
 const httpServer = serve({ fetch: app.fetch, port: PORT }, () => {
   // Safe to use console.log here, unlike the stdio entry: stdout isn't the
   // protocol channel over HTTP. console.error kept for consistency.

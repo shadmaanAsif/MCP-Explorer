@@ -180,7 +180,7 @@ describe('resources', () => {
 
   it('lists the city template', async () => {
     const { resourceTemplates } = await c.client.listResourceTemplates();
-    expect(resourceTemplates.map((t) => t.uriTemplate)).toEqual(['weather://city/{name}']);
+    expect(resourceTemplates.map((t) => t.uriTemplate)).toContain('weather://city/{name}');
   });
 
   it('reads one city', async () => {
@@ -202,9 +202,9 @@ describe('resources', () => {
 });
 
 describe('prompts', () => {
-  it('lists both prompts', async () => {
+  it('lists the weather prompts', async () => {
     const { prompts } = await c.client.listPrompts();
-    expect(prompts.map((p) => p.name).sort()).toEqual(['compare_weather', 'weather_report']);
+    expect(prompts.map((p) => p.name)).toEqual(expect.arrayContaining(['compare_weather', 'weather_report']));
   });
 
   it('compare_weather builds a message naming both cities and the tool', async () => {
