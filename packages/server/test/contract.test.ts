@@ -25,7 +25,12 @@ describe('public contract', () => {
     const { resources } = await h.client.listResources();
     const { resourceTemplates } = await h.client.listResourceTemplates();
     expect({
-      resources: resources.map(({ uri, name, mimeType }) => ({ uri, name, mimeType })).sort((a, b) => a.uri.localeCompare(b.uri)),
+      // repo://file/... entries are the review repo's current files: data that
+      // changes with every commit, not part of the contract. The template stays.
+      resources: resources
+        .filter(({ uri }) => !uri.startsWith('repo://file/'))
+        .map(({ uri, name, mimeType }) => ({ uri, name, mimeType }))
+        .sort((a, b) => a.uri.localeCompare(b.uri)),
       resourceTemplates: resourceTemplates.map(({ uriTemplate, name, mimeType }) => ({ uriTemplate, name, mimeType }))
     }).toMatchSnapshot();
   });
