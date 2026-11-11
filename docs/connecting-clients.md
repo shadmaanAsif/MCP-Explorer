@@ -120,3 +120,49 @@ The web dashboard reconnects by itself after a server restart (it drops its stal
 - **Port in use**: `lsof -nP -iTCP:4768 -sTCP:LISTEN` shows what holds the port.
 - **Stateless mode forgets everything**: `set_home_location` followed by `get_home_weather` only works in stateful HTTP or stdio.
 - **Debugging in VS Code**: `tsconfig.base.json` has `"sourceMap": true` so breakpoints in `.ts` files bind. Run `pnpm build` after changing code, because the debugger runs the build output.
+
+## 9. Using the code review server (Stage 8)
+
+**The review tools work over stdio only.** `get_diff`, `read_file`, `run_checks`, the `review_code` prompt and the `repo://file/…` resource read the disk of the machine the server runs on. Over stdio that is your own machine. Over HTTP it is wherever the server runs, so they refuse there. Details: [docs/branches/16-stage-8-code-review.md](branches/16-stage-8-code-review.md).
+
+### Use stdio, one server per project
+
+1. **Get the code and build it** on your machine (once, and after every change):
+   ```bash
+   pnpm install
+   pnpm build
+   ```
+2. **Add the server to the project's own `.cursor/mcp.json`:**
+   ```json
+   {
+     "mcpServers": {
+       "mcp-demo-review": {
+         "command": "node",
+         "args": ["/absolute/path/to/MCP-Explorer/packages/server/build/index.js"],
+         "env": { "REVIEW_ROOT": "/absolute/path/to/this/project" }
+       }
+     }
+   }
+   ```
+   Use the real absolute path of the project to review. Cursor may replace `${workspaceFolder}`, but that is unconfirmed. Without `REVIEW_ROOT` the server reviews the folder Cursor starts it in, which may not be your project.
+3. **Turn it on:** toggle `mcp-demo-review` on in Cursor's MCP settings. Cursor starts the server itself, so don't run `pnpm start:http`.
+4. **Use it:** type `/` and pick `review_code` with no arguments: it reviews your current branch against the repo's default branch (`develop`, `main` or `master`) with focus `all`. Cursor cannot pass arguments from chat; to change the focus or base, ask the model in plain words.
+5. **After a rebuild:** toggle the server off and on.
+
+Every result ends with a `[repo: /path]` line. Check it before trusting a review.
+
+### Over HTTP it will not work
+
+If your client uses the `url` entry (`mcp-demo-http`), a review tool returns this error:
+
+> Code review tools are not available over HTTP: they read the disk of the machine the server runs on, not your project. Use the stdio server on your own machine (docs/connecting-clients.md, section 9). If you want them to run on this server, ask the server admin to set REVIEW_ALLOW_HTTP=1 and REVIEW_ALLOWED_ROOTS and restart it.
+
+The prompt and the resource fail with the same message. The weather tools, other resources and prompts work normally. If you need the review tools on a shared server, ask the person who runs it. They can start it with:
+```bash
+REVIEW_ALLOW_HTTP=1 REVIEW_ALLOWED_ROOTS=/Users/you/projects pnpm start:http
+```
+That only helps when the server runs on the same machine as the project. A server on another machine can't see your files, so a path like `/Users/you/project` still won't exist there.
+
+### Limits
+
+`run_checks` runs `pnpm run build`, `test` and `typecheck`, so it needs pnpm and those scripts in the project, and it runs them as you. None of this was tested in Cursor end to end.
