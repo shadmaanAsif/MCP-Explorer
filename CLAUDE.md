@@ -21,4 +21,5 @@ Read the relevant file below only when the current task actually needs it — do
 |---|---|
 | [constitution/git-workflow.md](constitution/git-workflow.md) | doing anything beyond a single commit — branching, PRs, merge questions, cleanup |
 | [constitution/mcp-architecture.md](constitution/mcp-architecture.md) | writing or explaining server/client/transport code |
+| [constitution/planning.md](constitution/planning.md) | writing or changing the roadmap, phases or a stage plan |
 | [constitution/testing.md](constitution/testing.md) | verifying a change actually works, not just claiming it does |
