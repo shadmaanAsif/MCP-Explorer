@@ -46,7 +46,7 @@ Add `GET /.well-known/oauth-protected-resource` and the path form `/.well-known/
 Hono middleware on `/mcp`: read `Authorization: Bearer`, verify signature, issuer, audience and expiry; on failure return `401` with `WWW-Authenticate` carrying `resource_metadata` and `scope`; on success attach the caller (`sub`, `scope`) to the request context. Behind `AUTH_REQUIRED`.
 *Done when:* every row of the table below is a passing test.
 
-**9.4 Client side.**
+**9.4 Client side. (done)**
 The CLI client and the web dashboard send a token (from an env var), and the client reports a `401` with the metadata URL rather than a bare failure.
 *Done when:* with auth on, `pnpm client` and the dashboard work with a token and show a clear message without one.
 
