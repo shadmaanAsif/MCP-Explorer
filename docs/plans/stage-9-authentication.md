@@ -28,7 +28,7 @@ Checked at step 9.1 against the current spec, version **2026-07-28** ([authoriza
 | D1 | Who issues tokens | A small issuer in the repo (`src/auth/issuer.ts`) signing JWTs with `jose`, run with `pnpm issuer` | **built (9.1)** |
 | D2 | Signature type | RS256 with a JWKS endpoint, so the server fetches public keys the way it would from a real provider | **built (9.1)** |
 | D3 | Auth on by default? | **Off** by default (`AUTH_REQUIRED=1` turns it on) until 9.4 teaches the CLI client and dashboard to send a token. Phase 2 ends with it on. | agreed |
-| D4 | Use the SDK's bearer middleware or write our own | Decide at 9.3. The SDK ships `requireBearerAuth` under `server/auth/middleware`, but I have not checked that it works with Hono, and the server is Hono since Stage 7. | open |
+| D4 | Use the SDK's bearer middleware or write our own | **Our own** Hono middleware (`src/auth/middleware.ts`). The SDK's `requireBearerAuth` is Express-style `(req, res, next)`, and it answers a malformed header with 401 where the spec table says 400. | **decided (9.3)** |
 | D5 | Which routes are open | `/.well-known/*` and `/health` open; `/mcp` protected | proposed |
 
 ## Steps
@@ -42,7 +42,7 @@ Spec checked (list above). Added `jose` to the server package, `packages/server/
 Add `GET /.well-known/oauth-protected-resource` and the path form `/.well-known/oauth-protected-resource/mcp` to `http.ts`, returning the resource URL and `authorization_servers`.
 *Done when:* a test fetches it and the JSON names this server and lists the issuer under `authorization_servers`.
 
-**9.3 Bearer middleware.**
+**9.3 Bearer middleware. (done)**
 Hono middleware on `/mcp`: read `Authorization: Bearer`, verify signature, issuer, audience and expiry; on failure return `401` with `WWW-Authenticate` carrying `resource_metadata` and `scope`; on success attach the caller (`sub`, `scope`) to the request context. Behind `AUTH_REQUIRED`.
 *Done when:* every row of the table below is a passing test.
 

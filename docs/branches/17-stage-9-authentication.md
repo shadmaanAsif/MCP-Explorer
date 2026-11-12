@@ -20,6 +20,8 @@ Steps 9.1 to 9.5 from [the plan](../plans/stage-9-authentication.md).
 
 **9.2, done: protected-resource metadata.** `src/auth/resource-metadata.ts` serves `/.well-known/oauth-protected-resource` and `/.well-known/oauth-protected-resource/mcp` with the resource URL (`MCP_SERVER_URL`) and `authorization_servers` (`ISSUER_URL`). Both routes are public. Three tests; removing the route fails all three.
 
+**9.3, done: the bearer middleware.** `src/auth/middleware.ts` is a Hono middleware on `/mcp`, switched on with `AUTH_REQUIRED=1` (off by default until 9.4). It verifies signature (keys fetched from the issuer's `/jwks.json` and cached), issuer, expiry and that `aud` is this server (`MCP_SERVER_URL`). No header: `401` with `resource_metadata` and `scope`. Malformed header: `400 invalid_request`. Bad, expired or wrong-audience token: `401 invalid_token`. Issuer unreachable: `503`. On success the caller (`sub`, `scope`) is put on the request context for Stage 10. D4 decided: our own middleware, not the SDK's Express one. 12 unit tests plus 4 end-to-end tests against the real server and a real issuer; removing the audience check fails 2 of them.
+
 ```bash
 pnpm build
 pnpm issuer serve                                   # http://localhost:4769, keys in .auth/ (git-ignored)
