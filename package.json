@@ -7,6 +7,7 @@
     "build": "pnpm -r --if-present run build",
     "start": "pnpm --filter @mcp-explorer/server start",
     "start:http": "pnpm --filter @mcp-explorer/server start:http",
+    "issuer": "pnpm --filter @mcp-explorer/server issuer",
     "dev": "pnpm build && pnpm start",
     "client": "pnpm --filter @mcp-explorer/client start",
     "web": "pnpm --filter @mcp-explorer/web build && pnpm --filter @mcp-explorer/web start",

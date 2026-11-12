@@ -14,4 +14,15 @@ What changed: `README.md` (roadmap section, phase diagram, Phase 2 steps table),
 
 ## Commits 2 onward: the build
 
-Steps 9.1 to 9.5 from [the plan](../plans/stage-9-authentication.md). Nothing built yet.
+Steps 9.1 to 9.5 from [the plan](../plans/stage-9-authentication.md).
+
+**9.1, done: the token issuer.** The current MCP spec (2026-07-28) was read first; the plan's spec list had three errors, now fixed in the plan. `packages/server/src/auth/issuer.ts` signs RS256 tokens and publishes the public key; `issuer-cli.ts` runs it.
+
+```bash
+pnpm build
+pnpm issuer serve                                   # http://localhost:4769, keys in .auth/ (git-ignored)
+pnpm issuer token --sub alice --scope "mcp:tools"   # prints a token for http://localhost:4768/mcp
+curl localhost:4769/jwks.json                       # the public key; the private key never leaves the file
+```
+
+Seven tests cover it: a good token verifies; a wrong key, audience, issuer or expired time is refused; the JWKS has no private part; the key file is 0600 and reused between runs.

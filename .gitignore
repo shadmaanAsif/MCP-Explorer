@@ -5,3 +5,7 @@ launch.json
 .next/
 next-env.d.ts
 *.tsbuildinfo
+
+# local token issuer key (Stage 9)
+.auth/
+
