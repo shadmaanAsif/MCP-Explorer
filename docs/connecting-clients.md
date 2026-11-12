@@ -151,6 +151,24 @@ The web dashboard reconnects by itself after a server restart (it drops its stal
 
 Every result ends with a `[repo: /path]` line. Check it before trusting a review.
 
+### How the server finds the project
+
+`getRoot` in [`review.ts`](../packages/server/src/review.ts) picks the project in this order:
+
+1. **`REVIEW_ROOT`**: if set, it always wins. In `mcp.json` this is the `env` block, **not** `args`. `args` holds only the command's arguments (the path to `build/index.js`).
+2. **The tool's `root` argument**: passed by the model at call time, not read from `mcp.json`. It is refused when `REVIEW_ROOT` pins a different path.
+3. **Client roots**: the server asks the client which folders are open. This only works if the client supports roots. Cursor's support is unconfirmed.
+4. **The start folder**: the folder the server process was started in (`process.cwd()`, resolved to the git top level).
+
+If none applies and `REVIEW_REQUIRE_ROOT=1` (the HTTP default), the call fails.
+
+**How `env` reaches a stdio server:** the client starts the server as a child process, so it controls that process's environment.
+1. Cursor reads `mcp.json` and runs the `command` with the `args`.
+2. It adds the values in `env` to the child process's environment, the same as `REVIEW_ROOT=/path node build/index.js` in a shell.
+3. The server reads it as `process.env.REVIEW_ROOT`. Nothing is sent over the MCP connection for this.
+
+The variable is read once, at startup, so after editing `env` toggle the server off and on. Over HTTP the server is already running before any client connects, so a client's `mcp.json` can't set its environment. HTTP needs the `root` argument or the server's own settings instead.
+
 ### Over HTTP it will not work
 
 If your client uses the `url` entry (`mcp-demo-http`), a review tool returns this error:
