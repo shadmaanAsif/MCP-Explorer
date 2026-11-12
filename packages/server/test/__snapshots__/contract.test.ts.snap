@@ -298,7 +298,7 @@ exports[`public contract > tools 1`] = `
     "title": "Read a repo file",
   },
   {
-    "description": "Runs named checks (pnpm run build / test / typecheck) in the review repo, one after another, and reports progress after each. Cancel stops the running check.",
+    "description": "Runs named checks (build / test / typecheck) with the project's own package manager (npm, pnpm, yarn or bun, from its lockfile), one after another, and reports progress after each. A script the project does not have is skipped. Cancel stops the running check.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {

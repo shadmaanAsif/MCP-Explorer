@@ -256,6 +256,62 @@ describe('run_checks', () => {
     expect(updates[0].message).toBe('build: passed');
   });
 
+  describe('package manager', () => {
+    let project: string;
+    beforeEach(() => {
+      project = mkdtempSync(path.join(tmpdir(), 'review-pm-'));
+      process.env.REVIEW_ROOT = project; // the server is pinned to one repo, so point it at this one
+    });
+    afterEach(() => {
+      process.env.REVIEW_ROOT = repo;
+      rmSync(project, { recursive: true, force: true });
+    });
+
+    const write = (name: string, body: unknown) =>
+      writeFileSync(path.join(project, name), typeof body === 'string' ? body : JSON.stringify(body));
+    const run = (checks: string[]) =>
+      c.client.callTool({ name: 'run_checks', arguments: { checks } }).then(textOf);
+
+    it('uses npm in a project with a package-lock.json, and leaves the project untouched', async () => {
+      write('package.json', { name: 'p', scripts: { build: 'node -e "console.log(\'hi\')"' }, dependencies: { 'is-odd': '3.0.1' } });
+      write('package-lock.json', '{}');
+      const text = await run(['build']);
+      expect(text).toContain('## build: passed');
+      expect(text).toContain('$ npm run build');
+      expect(existsSync(path.join(project, 'node_modules'))).toBe(false);
+      expect(existsSync(path.join(project, 'pnpm-lock.yaml'))).toBe(false);
+    });
+
+    it('does not let pnpm install dependencies before running a script', async () => {
+      write('package.json', {
+        name: 'p',
+        packageManager: 'pnpm@12.8.1',
+        scripts: { build: 'node -e "0"' },
+        dependencies: { 'is-odd': '3.0.1' }
+      });
+      const text = await run(['build']);
+      expect(text).toContain('$ pnpm run build');
+      expect(existsSync(path.join(project, 'node_modules'))).toBe(false);
+      expect(existsSync(path.join(project, 'pnpm-lock.yaml'))).toBe(false);
+    });
+
+    it('skips a script the project does not have, and still runs the others', async () => {
+      write('package.json', { name: 'p', scripts: { build: 'node -e "0"', test: 'node -e "0"' } });
+      write('package-lock.json', '{}');
+      const text = await run(['build', 'typecheck', 'test']);
+      expect(text).toContain('## build: passed');
+      expect(text).toContain('## typecheck: skipped');
+      expect(text).toContain('no "typecheck" script');
+      expect(text).toContain('## test: passed');
+    });
+
+    it('reports a project with no package.json as an error', async () => {
+      const r = await c.client.callTool({ name: 'run_checks', arguments: { checks: ['build'] } });
+      expect(isError(r)).toBe(true);
+      expect(textOf(r)).toContain('No readable package.json');
+    });
+  });
+
   it('rejects a check name that is not on the list', async () => {
     const r = await c.client.callTool({ name: 'run_checks', arguments: { checks: ['rm -rf /'] } }).catch((e) => e);
     // Either a protocol error or an isError result, but never a run.
