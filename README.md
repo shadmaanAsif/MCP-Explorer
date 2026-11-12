@@ -159,7 +159,7 @@ Green = built and merged, amber = the next stage to plan and build. Everything e
 | **12. Observability** | `NN-stage-12-observability` | See the server in production and stop it cleanly. | 12.1 structured logs with a session id · 12.2 health and readiness · 12.3 metrics · 12.4 OpenTelemetry traces · 12.5 graceful shutdown |
 | **13. Containerize and deploy** | `NN-stage-13-containerize-deploy` | Ship it, update it, roll it back. | 13.1 Dockerfile · 13.2 env config · 13.3 gateway with TLS and no SSE buffering · 13.4 CD pipeline · 13.5 tool versioning policy |
 
-Side branches that may come up during Phase 2 (not stages): `run_checks` skips missing scripts and detects the package manager; background checks (start, then fetch the result) for clients with short timeouts; npm package prep for the stdio server.
+Side branches that may come up during Phase 2 (not stages): **split `review.ts` (610 lines) into a `review/` folder with a nested `helpers/` (`roots`, `files`, `git`, `checks`, `errors`), as a pure move with no behaviour change, picked up after Stage 9 and before Stage 10**; background checks (start, then fetch the result) for clients with short timeouts; npm package prep for the stdio server.
 
 ### Phase 3 — Build the client *(planned: Stages 14–18)*
 
