@@ -26,3 +26,5 @@ curl localhost:4769/jwks.json                       # the public key; the privat
 ```
 
 Seven tests cover it: a good token verifies; a wrong key, audience, issuer or expired time is refused; the JWKS has no private part; the key file is 0600 and reused between runs.
+
+**Config in one `.env` file.** Ports and addresses were spread over code defaults and `package.json` flags. They are now listed in [`.env.example`](../../.env.example): `MCP_SERVER_PORT`, `WEB_PORT`, `ISSUER_PORT`, `MCP_SERVER_URL`, `ISSUER_URL`, `TOKEN_AUDIENCE`, `TOKEN_TTL_SECONDS` and more. `cp .env.example .env` (git-ignored). The scripts load it with `node --env-file-if-exists=../../.env`; the dashboard uses a small wrapper, `packages/web/scripts/next.mjs`, because Next only reads `.env` files inside its own package. Shell variables beat the file and flags beat both; the built-in defaults are unchanged, so no `.env` still works. Checked by running all three processes on 5767 to 5769 from a changed `.env`.

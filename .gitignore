@@ -9,3 +9,5 @@ next-env.d.ts
 # local token issuer key (Stage 9)
 .auth/
 
+# local config; .env.example is the committed template
+.env

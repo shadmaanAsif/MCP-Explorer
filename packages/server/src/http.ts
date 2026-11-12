@@ -6,7 +6,8 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { Hono, type Context } from 'hono';
 import { createServer, type SessionState } from './create-server.js';
 
-const PORT = Number(process.env.PORT ?? 4768);
+// MCP_SERVER_PORT is the project's name for it; PORT is kept as a fallback for hosts that set it.
+const PORT = Number(process.env.MCP_SERVER_PORT ?? process.env.PORT ?? 4768);
 const MCP_PATH = '/mcp';
 const SESSION_HEADER = 'mcp-session-id';
 const SESSION_TTL_MS = Number(process.env.MCP_SESSION_TTL_MS ?? 30 * 60 * 1000);

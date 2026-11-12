@@ -23,7 +23,7 @@ export async function startHttpServer(env: Record<string, string>): Promise<Http
   const port = await freePort();
   let output = '';
   const child: ChildProcess = spawn(process.execPath, [HTTP_ENTRY], {
-    env: { ...process.env, PORT: String(port), ...env },
+    env: { ...process.env, PORT: String(port), MCP_SERVER_PORT: String(port), ...env },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   child.stdout?.on('data', (d) => (output += d));

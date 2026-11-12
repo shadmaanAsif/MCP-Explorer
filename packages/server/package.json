@@ -7,8 +7,8 @@
   "scripts": {
     "build": "tsc",
     "start": "node build/index.js",
-    "start:http": "node build/http.js",
-    "issuer": "node build/auth/issuer-cli.js"
+    "start:http": "node --env-file-if-exists=../../.env build/http.js",
+    "issuer": "node --env-file-if-exists=../../.env build/auth/issuer-cli.js"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.5",

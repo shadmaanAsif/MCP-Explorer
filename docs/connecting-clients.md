@@ -26,7 +26,7 @@ HTTP mode has two sub-modes, chosen with `MCP_MODE`:
 - `stateful` (default): one `McpServer` per client, keyed by the `Mcp-Session-Id` header. Remembers per-client state and delivers a client's cancel to a running call.
 - `stateless`: a fresh `McpServer` per request. Remembers nothing.
 
-`PORT` (default `4768`) and `MCP_SESSION_TTL_MS` (idle timeout, default 30 minutes) also apply. The URL path is always `/mcp`; any other path returns 404.
+`MCP_SERVER_PORT` (default `4768`; `PORT` still works as a fallback) and `MCP_SESSION_TTL_MS` (idle timeout, default 30 minutes) also apply. All ports and settings live in one file: see [Ports and settings](#ports-and-settings) at the end of this page. The URL path is always `/mcp`; any other path returns 404.
 
 ## 2. Scripted CLI client (`pnpm client`)
 
@@ -166,3 +166,24 @@ That only helps when the server runs on the same machine as the project. A serve
 ### Limits
 
 `run_checks` runs `pnpm run build`, `test` and `typecheck`, so it needs pnpm and those scripts in the project, and it runs them as you. None of this was tested in Cursor end to end.
+
+## Ports and settings
+
+Every port and address is set in one file at the repo root. Copy the template once:
+
+```bash
+cp .env.example .env     # .env is git-ignored; every value in the template is the built-in default
+```
+
+| Process | Command | Port variable | Default |
+|---|---|---|---|
+| MCP server (HTTP) | `pnpm start:http` | `MCP_SERVER_PORT` | 4768 |
+| Web dashboard | `pnpm web`, `pnpm web:dev` | `WEB_PORT` | 4767 |
+| Token issuer | `pnpm issuer serve` | `ISSUER_PORT` | 4769 |
+| CLI client | `pnpm client` | none (it connects out, to `MCP_SERVER_URL`) | |
+
+If you change `MCP_SERVER_PORT`, change `MCP_SERVER_URL` and `TOKEN_AUDIENCE` to match. Changing `ISSUER_PORT` changes the default for `ISSUER_URL` too, if `ISSUER_URL` is not set.
+
+- **Which commands read `.env`:** `start:http`, `issuer`, `client`, `web` and `web:dev`. The stdio server (`pnpm start`) does not, because Cursor or the Inspector start it and pass their own `env` in `mcp.json`.
+- **Precedence:** a variable already set in your shell beats the file, and a command-line flag (such as `--ttl`) beats both. No `.env` at all also works.
+- **Tests:** they pick free ports themselves and do not read `.env`.

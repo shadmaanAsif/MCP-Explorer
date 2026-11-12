@@ -4,9 +4,9 @@
   "description": "A minimal browser GUI for the MCP server, built on top of @mcp-explorer/client — Next.js + React, driven by Server Components and Server Actions.",
   "type": "module",
   "scripts": {
-    "dev": "next dev -p 4767",
+    "dev": "node scripts/next.mjs dev",
     "build": "next build",
-    "start": "next start -p 4767"
+    "start": "node scripts/next.mjs start"
   },
   "dependencies": {
     "@mcp-explorer/client": "workspace:*",
