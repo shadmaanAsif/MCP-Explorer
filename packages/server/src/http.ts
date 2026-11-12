@@ -4,6 +4,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { Hono, type Context } from 'hono';
+import { bearerAuth } from './auth/middleware.js';
 import { resourceMetadataApp } from './auth/resource-metadata.js';
 import { createServer, type SessionState } from './create-server.js';
 
@@ -177,6 +178,19 @@ app.use('*', async (c, next) => {
 
 // Public: a client reads this before it has a token (Stage 9.2).
 app.route('/', resourceMetadataApp(MCP_SERVER_URL, ISSUER_URL));
+// Stage 9.3: with AUTH_REQUIRED=1 every /mcp request needs a valid Bearer token.
+// Off by default until the CLI client and dashboard can send one (9.4).
+if (process.env.AUTH_REQUIRED === '1') {
+  app.use(
+    MCP_PATH,
+    bearerAuth({
+      issuer: ISSUER_URL,
+      audience: MCP_SERVER_URL,
+      resourceMetadataUrl: new URL('/.well-known/oauth-protected-resource/mcp', MCP_SERVER_URL).href,
+      scope: process.env.AUTH_SCOPE || 'mcp:tools',
+    }),
+  );
+}
 app.all(MCP_PATH, (c) => (MODE === 'stateful' ? handleStateful(c) : handleStateless(c)));
 app.notFound((c) => c.body(null, 404));
 app.onError((error, c) => {
