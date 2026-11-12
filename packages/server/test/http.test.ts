@@ -460,3 +460,41 @@ describe('review tools over HTTP by default', () => {
     expect(textOf(r)).toBe('5');
   });
 });
+
+describe('protected resource metadata (Stage 9.2)', () => {
+  let server: HttpServer;
+  beforeAll(async () => {
+    server = await startHttpServer({
+      MCP_SERVER_URL: 'http://mcp.example/mcp',
+      ISSUER_URL: 'http://issuer.example'
+    });
+  });
+  afterAll(async () => {
+    await server.stop();
+  });
+
+  const base = () => server.url.replace('/mcp', '');
+
+  it.each(['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp'])(
+    'serves %s with no token',
+    async (route) => {
+      const res = await fetch(base() + route);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        resource: 'http://mcp.example/mcp',
+        authorization_servers: ['http://issuer.example']
+      });
+    }
+  );
+
+  it('defaults to this server and the local issuer', async () => {
+    const plain = await startHttpServer({ MCP_SERVER_URL: '', ISSUER_URL: '' });
+    try {
+      const doc = await (await fetch(plain.url.replace('/mcp', '/.well-known/oauth-protected-resource'))).json();
+      expect(doc.resource).toBe(plain.url.replace('127.0.0.1', 'localhost'));
+      expect(doc.authorization_servers).toEqual(['http://localhost:4769']);
+    } finally {
+      await plain.stop();
+    }
+  });
+});

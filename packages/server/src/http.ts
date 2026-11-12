@@ -4,11 +4,14 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { Hono, type Context } from 'hono';
+import { resourceMetadataApp } from './auth/resource-metadata.js';
 import { createServer, type SessionState } from './create-server.js';
 
 // MCP_SERVER_PORT is the project's name for it; PORT is kept as a fallback for hosts that set it.
 const PORT = Number(process.env.MCP_SERVER_PORT ?? process.env.PORT ?? 4768);
 const MCP_PATH = '/mcp';
+const MCP_SERVER_URL = process.env.MCP_SERVER_URL || `http://localhost:${PORT}${MCP_PATH}`;
+const ISSUER_URL = process.env.ISSUER_URL || 'http://localhost:4769';
 const SESSION_HEADER = 'mcp-session-id';
 const SESSION_TTL_MS = Number(process.env.MCP_SESSION_TTL_MS ?? 30 * 60 * 1000);
 const SWEEP_INTERVAL_MS = Math.min(60_000, SESSION_TTL_MS);
@@ -172,6 +175,8 @@ app.use('*', async (c, next) => {
   console.error(`[mcp-demo] ${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status} ${Date.now() - start}ms`);
 });
 
+// Public: a client reads this before it has a token (Stage 9.2).
+app.route('/', resourceMetadataApp(MCP_SERVER_URL, ISSUER_URL));
 app.all(MCP_PATH, (c) => (MODE === 'stateful' ? handleStateful(c) : handleStateless(c)));
 app.notFound((c) => c.body(null, 404));
 app.onError((error, c) => {
