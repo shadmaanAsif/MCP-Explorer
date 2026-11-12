@@ -18,6 +18,18 @@ Steps 9.1 to 9.5 from [the plan](../plans/stage-9-authentication.md).
 
 **9.1, done: the token issuer.** The current MCP spec (2026-07-28) was read first; the plan's spec list had three errors, now fixed in the plan. `packages/server/src/auth/issuer.ts` signs RS256 tokens and publishes the public key; `issuer-cli.ts` runs it.
 
+### How the issuer CLI reads its arguments
+
+`issuer-cli.ts` starts with one line: `const [command, ...rest] = process.argv.slice(2);`
+
+1. **`process.argv`** is a built-in Node array of the words typed on the command line. For `node build/auth/issuer-cli.js token --sub alice --scope "mcp:tools"` it holds: the node program, the script path, `token`, `--sub`, `alice`, `--scope`, `mcp:tools` (the shell removes the quotes).
+2. **`.slice(2)`** drops the first two items, which are always Node and the script path. What is left is only your arguments: `['token', '--sub', 'alice', '--scope', 'mcp:tools']`.
+3. **`const [command, ...rest] = …`** is array destructuring. The first item goes into `command` (`'token'`) and `...rest` collects the others (`['--sub', 'alice', '--scope', 'mcp:tools']`). It is the same as `args[0]` and `args.slice(1)`.
+
+`rest` then goes to Node's built-in `parseArgs`, which turns the flags into `{ sub: 'alice', scope: 'mcp:tools' }`. `command` picks the branch: `token` prints a token, `serve` starts the issuer, anything else prints usage.
+
+Try it: `node -e "console.log(process.argv.slice(2))" token --sub alice` prints `[ 'token', '--sub', 'alice' ]`.
+
 **9.2, done: protected-resource metadata.** `src/auth/resource-metadata.ts` serves `/.well-known/oauth-protected-resource` and `/.well-known/oauth-protected-resource/mcp` with the resource URL (`MCP_SERVER_URL`) and `authorization_servers` (`ISSUER_URL`). Both routes are public. Three tests; removing the route fails all three.
 
 **9.3, done: the bearer middleware.** `src/auth/middleware.ts` is a Hono middleware on `/mcp`, switched on with `AUTH_REQUIRED=1` (off by default until 9.4). It verifies signature (keys fetched from the issuer's `/jwks.json` and cached), issuer, expiry and that `aud` is this server (`MCP_SERVER_URL`). No header: `401` with `resource_metadata` and `scope`. Malformed header: `400 invalid_request`. Bad, expired or wrong-audience token: `401 invalid_token`. Issuer unreachable: `503`. On success the caller (`sub`, `scope`) is put on the request context for Stage 10. D4 decided: our own middleware, not the SDK's Express one. 12 unit tests plus 4 end-to-end tests against the real server and a real issuer; removing the audience check fails 2 of them.
