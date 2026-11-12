@@ -18,6 +18,8 @@ Steps 9.1 to 9.5 from [the plan](../plans/stage-9-authentication.md).
 
 **9.1, done: the token issuer.** The current MCP spec (2026-07-28) was read first; the plan's spec list had three errors, now fixed in the plan. `packages/server/src/auth/issuer.ts` signs RS256 tokens and publishes the public key; `issuer-cli.ts` runs it.
 
+**9.2, done: protected-resource metadata.** `src/auth/resource-metadata.ts` serves `/.well-known/oauth-protected-resource` and `/.well-known/oauth-protected-resource/mcp` with the resource URL (`MCP_SERVER_URL`) and `authorization_servers` (`ISSUER_URL`). Both routes are public. Three tests; removing the route fails all three.
+
 ```bash
 pnpm build
 pnpm issuer serve                                   # http://localhost:4769, keys in .auth/ (git-ignored)
@@ -27,4 +29,4 @@ curl localhost:4769/jwks.json                       # the public key; the privat
 
 Seven tests cover it: a good token verifies; a wrong key, audience, issuer or expired time is refused; the JWKS has no private part; the key file is 0600 and reused between runs.
 
-**Config in one `.env` file.** Ports and addresses were spread over code defaults and `package.json` flags. They are now listed in [`.env.example`](../../.env.example): `MCP_SERVER_PORT`, `WEB_PORT`, `ISSUER_PORT`, `MCP_SERVER_URL`, `ISSUER_URL`, `TOKEN_AUDIENCE`, `TOKEN_TTL_SECONDS` and more. `cp .env.example .env` (git-ignored). The scripts load it with `node --env-file-if-exists=../../.env`; the dashboard uses a small wrapper, `packages/web/scripts/next.mjs`, because Next only reads `.env` files inside its own package. Shell variables beat the file and flags beat both; the built-in defaults are unchanged, so no `.env` still works. Checked by running all three processes on 5767 to 5769 from a changed `.env`.
+**Config in a `.env` per package.** Ports and addresses were spread over code defaults and `package.json` flags. Each of `packages/server`, `packages/client` and `packages/web` now has a committed `.env.example` and a git-ignored `.env`. `cp` each template. The server, issuer and client scripts load it with `node --env-file-if-exists=.env`, because Node never reads `.env` itself. The dashboard reads its own file through Next.js, and `packages/web/scripts/next.mjs` takes `WEB_PORT` from it. Shell variables beat the file and flags beat both; the built-in defaults are unchanged, so no `.env` still works. It started as one root file, then was split. Checked by running the server, issuer, client and dashboard on 5767 to 5769 from changed per-package files.

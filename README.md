@@ -18,7 +18,7 @@ pnpm build
 pnpm start:http     # the server, on http://localhost:4768/mcp
 ```
 
-Ports and addresses are set in one `.env` file (`cp .env.example .env`; see [Ports and settings](docs/connecting-clients.md#ports-and-settings)).
+Ports and addresses are set in a `.env` per package (`packages/server`, `client`, `web`; copy each `.env.example`; see [Ports and settings](docs/connecting-clients.md#ports-and-settings)).
 
 Then, in another terminal, try a client:
 

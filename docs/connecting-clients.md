@@ -187,21 +187,22 @@ That only helps when the server runs on the same machine as the project. A serve
 
 ## Ports and settings
 
-Every port and address is set in one file at the repo root. Copy the template once:
+Each package has its own `.env`, with a committed `.env.example` next to it. Copy the templates once:
 
 ```bash
-cp .env.example .env     # .env is git-ignored; every value in the template is the built-in default
+for p in server client web; do cp packages/$p/.env.example packages/$p/.env; done   # .env is git-ignored; the template values are the defaults
 ```
 
-| Process | Command | Port variable | Default |
-|---|---|---|---|
-| MCP server (HTTP) | `pnpm start:http` | `MCP_SERVER_PORT` | 4768 |
-| Web dashboard | `pnpm web`, `pnpm web:dev` | `WEB_PORT` | 4767 |
-| Token issuer | `pnpm issuer serve` | `ISSUER_PORT` | 4769 |
-| CLI client | `pnpm client` | none (it connects out, to `MCP_SERVER_URL`) | |
+| Process | Command | File | Variable | Default |
+|---|---|---|---|---|
+| MCP server (HTTP) | `pnpm start:http` | `packages/server/.env` | `MCP_SERVER_PORT` | 4768 |
+| Token issuer | `pnpm issuer serve` | `packages/server/.env` | `ISSUER_PORT` | 4769 |
+| Web dashboard | `pnpm web`, `pnpm web:dev` | `packages/web/.env` | `WEB_PORT` | 4767 |
+| CLI client | `pnpm client` | `packages/client/.env` | none (it connects out, to `MCP_SERVER_URL`) | |
 
-If you change `MCP_SERVER_PORT`, change `MCP_SERVER_URL` and `TOKEN_AUDIENCE` to match. Changing `ISSUER_PORT` changes the default for `ISSUER_URL` too, if `ISSUER_URL` is not set.
+`MCP_SERVER_URL` appears in all three files, and the server and issuer also share `ISSUER_URL`. If you change `MCP_SERVER_PORT`, update `MCP_SERVER_URL` in all three and `TOKEN_AUDIENCE` in the server file. Changing `ISSUER_PORT` changes the default for `ISSUER_URL` too, if `ISSUER_URL` is not set.
 
-- **Which commands read `.env`:** `start:http`, `issuer`, `client`, `web` and `web:dev`. The stdio server (`pnpm start`) does not, because Cursor or the Inspector start it and pass their own `env` in `mcp.json`.
+- **How each loads its file:** the server, issuer and client run `node --env-file-if-exists=.env`, since Node never reads `.env` by itself. The dashboard reads its own file through Next.js, plus a small wrapper (`scripts/next.mjs`) for `WEB_PORT`.
+- **Which commands read a `.env`:** `start:http`, `issuer`, `client`, `web` and `web:dev`. The stdio server (`pnpm start`) does not, because Cursor or the Inspector start it and pass their own `env` in `mcp.json`.
 - **Precedence:** a variable already set in your shell beats the file, and a command-line flag (such as `--ttl`) beats both. No `.env` at all also works.
 - **Tests:** they pick free ports themselves and do not read `.env`.

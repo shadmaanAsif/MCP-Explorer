@@ -1,12 +1,12 @@
-// Runs `next dev` or `next start` with the project's shared .env loaded and
-// the port taken from WEB_PORT, so the dashboard's port is set in one place.
-// (Next only reads .env files inside packages/web, not the repo root.)
+// Runs `next dev` or `next start` with the port taken from WEB_PORT in
+// packages/web/.env. Next loads that file itself for the server code, but the
+// -p flag is decided here, before Next starts.
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
-const envFile = fileURLToPath(new URL('../../../.env', import.meta.url));
+const envFile = fileURLToPath(new URL('../.env', import.meta.url));
 if (existsSync(envFile)) process.loadEnvFile(envFile); // never overrides variables already set
 
 const command = process.argv[2]; // dev | start
