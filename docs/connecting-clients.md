@@ -165,4 +165,4 @@ That only helps when the server runs on the same machine as the project. A serve
 
 ### Limits
 
-`run_checks` runs `pnpm run build`, `test` and `typecheck`, so it needs pnpm and those scripts in the project, and it runs them as you. None of this was tested in Cursor end to end.
+`run_checks` runs the project's `build`, `test` and `typecheck` scripts with the project's own package manager (npm, pnpm, yarn or bun, chosen from `packageManager` in `package.json`, then the lockfile). A script the project doesn't have is reported as `skipped`, and each result shows the command that ran. It runs the scripts as you, so they can write build output, but pnpm is stopped from installing dependencies or writing a lockfile into the project. None of this was tested in Cursor end to end.

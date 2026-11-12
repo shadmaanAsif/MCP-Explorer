@@ -30,10 +30,46 @@ const MAX_CHECK_OUTPUT_CHARS = 4000;
 const DEFAULT_CHECK_TIMEOUT_MS = 120_000;
 const REVIEW_FOCUSES = ['all', 'bugs', 'security', 'style', 'tests'];
 
-// The only things run_checks may run: `pnpm run <script>` in the repo root.
+// The only things run_checks may run: `<package manager> run <script>` in the repo
+// root, with the script name taken from the fixed list below. The package manager
+// is the one the project itself uses (see detectPackageManager).
 // The caller picks a name; it never supplies the command.
 const CHECKS = ['build', 'test', 'typecheck'] as const;
 type CheckName = (typeof CHECKS)[number];
+
+const PACKAGE_MANAGERS = ['npm', 'pnpm', 'yarn', 'bun'] as const;
+type PackageManager = (typeof PACKAGE_MANAGERS)[number];
+
+// Run the project's own package manager. Running pnpm in an npm project made
+// pnpm install the dependencies itself and write a pnpm-lock.yaml into the
+// reviewed repo, which broke it. Order: the `packageManager` field in
+// package.json, then the lockfile. When both a package-lock.json and another
+// lockfile exist, npm wins: a stray second lockfile is the usual cause.
+async function detectPackageManager(root: string, pkg: { packageManager?: unknown }): Promise<PackageManager> {
+  if (typeof pkg.packageManager === 'string') {
+    const name = pkg.packageManager.split('@')[0] as PackageManager;
+    if (PACKAGE_MANAGERS.includes(name)) return name;
+  }
+  const lockfiles: [string, PackageManager][] = [
+    ['package-lock.json', 'npm'],
+    ['yarn.lock', 'yarn'],
+    ['pnpm-lock.yaml', 'pnpm'],
+    ['bun.lock', 'bun'],
+    ['bun.lockb', 'bun']
+  ];
+  for (const [file, manager] of lockfiles) {
+    if (await fs.access(path.join(root, file)).then(() => true, () => false)) return manager;
+  }
+  return 'npm';
+}
+
+async function readPackageJson(root: string): Promise<{ scripts?: Record<string, unknown>; packageManager?: unknown } | null> {
+  try {
+    return JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+}
 
 // Thrown for bad input. Tools turn it into an isError result; resource reads
 // turn it into a protocol error.
@@ -294,12 +330,19 @@ async function gitDiff(root: string, base: string, head: string, signal: AbortSi
 
 type CheckResult = {
   name: CheckName;
-  status: 'passed' | 'failed' | 'cancelled' | 'timed out';
+  status: 'passed' | 'failed' | 'skipped' | 'cancelled' | 'timed out';
   exitCode: number | null;
   output: string;
+  command?: string;
 };
 
-async function runCheck(name: CheckName, root: string, callerSignal: AbortSignal): Promise<CheckResult> {
+async function runCheck(
+  name: CheckName,
+  root: string,
+  manager: PackageManager,
+  callerSignal: AbortSignal
+): Promise<CheckResult> {
+  const command = `${manager} run ${name}`;
   // A manual timer, not AbortSignal.timeout: that one can be garbage-collected
   // inside AbortSignal.any on Node 20 and never fire (see fetchWeather).
   const timeoutController = new AbortController();
@@ -317,11 +360,20 @@ async function runCheck(name: CheckName, root: string, callerSignal: AbortSignal
 
   try {
     const exitCode = await new Promise<number | null>((resolve, reject) => {
-      // No shell, and only `pnpm run <known script>`: nothing from the caller
-      // reaches the command line.
-      // `detached` gives pnpm its own process group, so cancel and timeout can
-      // kill the script pnpm started too. Killing only pnpm leaves it running.
-      const child = spawn('pnpm', ['run', name], { cwd: root, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      // No shell, and only `<manager> run <known script>`: nothing from the
+      // caller reaches the command line.
+      // `detached` gives the package manager its own process group, so cancel
+      // and timeout can kill the script it started too. Killing only the
+      // manager leaves the script running.
+      // pnpm 12 installs missing dependencies and writes a pnpm-lock.yaml before
+      // it runs a script. A review must not change the project it reads, so turn
+      // both off (checked on pnpm 12.8.1: neither setting is enough alone).
+      const child = spawn(manager, ['run', name], {
+        cwd: root,
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, pnpm_config_verify_deps_before_run: 'false', pnpm_config_lockfile: 'false' }
+      });
       const stop = () => {
         try {
           if (child.pid) process.kill(-child.pid, 'SIGTERM');
@@ -340,11 +392,11 @@ async function runCheck(name: CheckName, root: string, callerSignal: AbortSignal
         resolve(code);
       });
     });
-    return { name, status: exitCode === 0 ? 'passed' : 'failed', exitCode, output: output.slice(-MAX_CHECK_OUTPUT_CHARS) };
+    return { name, status: exitCode === 0 ? 'passed' : 'failed', exitCode, output: output.slice(-MAX_CHECK_OUTPUT_CHARS), command };
   } catch (err) {
-    if (callerSignal.aborted) return { name, status: 'cancelled', exitCode: null, output: output.slice(-MAX_CHECK_OUTPUT_CHARS) };
-    if (timedOut) return { name, status: 'timed out', exitCode: null, output: output.slice(-MAX_CHECK_OUTPUT_CHARS) };
-    return { name, status: 'failed', exitCode: null, output: `Could not start: ${(err as Error).message}` };
+    if (callerSignal.aborted) return { name, status: 'cancelled', exitCode: null, output: output.slice(-MAX_CHECK_OUTPUT_CHARS), command };
+    if (timedOut) return { name, status: 'timed out', exitCode: null, output: output.slice(-MAX_CHECK_OUTPUT_CHARS), command };
+    return { name, status: 'failed', exitCode: null, output: `Could not start: ${(err as Error).message}`, command };
   } finally {
     clearTimeout(timer);
   }
@@ -449,7 +501,7 @@ export function registerReview(server: McpServer): void {
     {
       title: 'Run project checks',
       description:
-        'Runs named checks (pnpm run build / test / typecheck) in the review repo, one after another, and reports progress after each. Cancel stops the running check.',
+        'Runs named checks (build / test / typecheck) with the project\'s own package manager (npm, pnpm, yarn or bun, from its lockfile), one after another, and reports progress after each. A script the project does not have is skipped. Cancel stops the running check.',
       inputSchema: {
         checks: z.array(z.enum(CHECKS)).min(1).max(CHECKS.length).describe('Which checks to run, in order'),
         root: z
@@ -469,10 +521,17 @@ export function registerReview(server: McpServer): void {
         throw err;
       }
       const results: CheckResult[] = [];
+      const pkg = await readPackageJson(root);
+      if (!pkg) return errorResult(`No readable package.json in ${root}, so there are no scripts to run.`);
+      const manager = await detectPackageManager(root, pkg);
 
       for (const [index, name] of checks.entries()) {
         if (extra.signal.aborted) break;
-        results.push(await runCheck(name, root, extra.signal));
+        if (typeof pkg.scripts?.[name] !== 'string') {
+          results.push({ name, status: 'skipped', exitCode: null, output: `package.json has no "${name}" script.` });
+        } else {
+          results.push(await runCheck(name, root, manager, extra.signal));
+        }
         if (progressToken !== undefined) {
           await extra.sendNotification({
             method: 'notifications/progress',
@@ -487,7 +546,7 @@ export function registerReview(server: McpServer): void {
       }
 
       const text = results
-        .map((r) => `## ${r.name}: ${r.status}${r.exitCode !== null ? ` (exit ${r.exitCode})` : ''}\n${r.output.trim()}`)
+        .map((r) => `## ${r.name}: ${r.status}${r.exitCode !== null ? ` (exit ${r.exitCode})` : ''}${r.command ? `\n$ ${r.command}` : ''}\n${r.output.trim()}`)
         .join('\n\n');
       // A failing check is a normal result for a reviewer, not a tool error.
       return textResult(text === '' ? 'No checks ran' : text, root);
