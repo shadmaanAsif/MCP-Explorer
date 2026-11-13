@@ -153,7 +153,7 @@ Every result ends with a `[repo: /path]` line. Check it before trusting a review
 
 ### How the server finds the project
 
-`getRoot` in [`review.ts`](../packages/server/src/review.ts) picks the project in this order:
+`getRoot` in [`review/helpers/roots.ts`](../packages/server/src/review/helpers/roots.ts) picks the project in this order:
 
 1. **`REVIEW_ROOT`**: if set, it always wins. In `mcp.json` this is the `env` block, **not** `args`. `args` holds only the command's arguments (the path to `build/index.js`).
 2. **The tool's `root` argument**: passed by the model at call time, not read from `mcp.json`. It is refused when `REVIEW_ROOT` pins a different path.
