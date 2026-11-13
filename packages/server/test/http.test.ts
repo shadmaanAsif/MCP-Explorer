@@ -560,4 +560,23 @@ describe('bearer auth end to end (Stage 9.3)', () => {
     const res = await fetch(server.url.replace('/mcp', '/.well-known/oauth-protected-resource'));
     expect(res.status).toBe(200);
   });
+
+  it('checks the token on every request: a session id alone is refused', async () => {
+    const token = await createToken(keys, { issuer: issuerUrl, subject: 'alice', audience, scope: 'mcp:tools' });
+    const init = await fetch(server.url, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, Authorization: `Bearer ${token}` },
+      body: JSON.stringify(initializeBody),
+    });
+    expect(init.status).toBe(200);
+    const sessionId = init.headers.get('mcp-session-id');
+    expect(sessionId).toBeTruthy();
+
+    const noToken = await fetch(server.url, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, 'Mcp-Session-Id': sessionId! },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
+    });
+    expect(noToken.status).toBe(401);
+  });
 });
