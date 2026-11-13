@@ -1,6 +1,6 @@
 # #17 — Stage 9: authentication (`17-stage-9-authentication`)
 
-**Status:** planning done; 9.1 to 9.4 built; 9.5 (final tests and docs) to do. This file is updated as the steps land.
+**Status:** planning done; all five steps built. This file is updated as the steps land.
 
 ## Contents
 
@@ -11,6 +11,9 @@
 - [9.2 Protected-resource metadata](#92-protected-resource-metadata)
 - [9.3 Bearer middleware](#93-bearer-middleware)
 - [9.4 Clients send the token](#94-clients-send-the-token)
+- [9.5 Tests and docs](#95-tests-and-docs)
+- [Using other MCP clients](#using-other-mcp-clients)
+- [Try it end to end](#try-it-end-to-end)
 
 ## Phase planning (commit 1)
 
@@ -33,7 +36,7 @@ Steps come from [the plan](../plans/stage-9-authentication.md).
 | 9.2 | Public notice of where tokens come from | `src/auth/resource-metadata.ts` | Done |
 | 9.3 | The guard on `/mcp` | `src/auth/middleware.ts` | Done |
 | 9.4 | CLI client and dashboard send the token | `packages/client/src/connection.ts` | Done |
-| 9.5 | Final tests, token guide, README and roadmap | docs | To do |
+| 9.5 | Final tests, token guide, README and roadmap | `http.test.ts`, `docs/connecting-clients.md` §10 | Done |
 
 ## Config: one `.env` per package
 
@@ -133,3 +136,71 @@ Check it: `node -e "console.log(process.argv.slice(2))" token --sub alice` print
 - **Dashboard:** shows it on the page instead of an error page. A failed connection is no longer cached, so fixing the token and restarting is enough.
 - **Config:** set `MCP_TOKEN` in `packages/client/.env` or `packages/web/.env` (both `.env.example` files list it).
 - **Tests (3):** `test/client-auth.test.ts` runs the client against the real server and issuer. Removing the header fails the valid-token test.
+
+## 9.5 Tests and docs
+
+- **New test:** a request that carries a valid `Mcp-Session-Id` but no token still gets `401`, so the token is checked on every request and not once per session.
+- **Mutation check:** with the guard switched off in `http.ts` (`AUTH_REQUIRED === 'never'`), 5 end-to-end tests fail: the two refusal tests, the session-id test, and the two client message tests. Restored afterwards.
+- **Totals:** 181 tests pass and typecheck is clean. Together they cover each row of the plan's behaviour table except the `/health` row (the server has no such route).
+- **Docs:** `docs/connecting-clients.md` §10 explains tokens step by step (turn on, issuer, token, client, check, answers table). The README row and roadmap are updated.
+
+## Using other MCP clients
+
+Every HTTP client does the same thing: it sends `Authorization: Bearer <token>` on each request to `http://localhost:4768/mcp`. Only where you set the header differs. Make the token first (`pnpm --silent issuer token --sub alice --scope "mcp:tools"`, see [9.1](#91-token-issuer)). **None of the clients below were tested against this server, apart from our own CLI.**
+
+- **Cursor** (`.cursor/mcp.json`). Whether Cursor sends custom `headers` is unconfirmed:
+  ```json
+  {
+    "mcpServers": {
+      "mcp-demo-http": {
+        "url": "http://localhost:4768/mcp",
+        "headers": { "Authorization": "Bearer <paste token>" }
+      }
+    }
+  }
+  ```
+- **MCP Inspector:** run `pnpm dlx @modelcontextprotocol/inspector`, choose transport "Streamable HTTP", enter the URL, and add the header `Authorization: Bearer <token>` in its Authentication section. The field name in its UI may differ.
+- **Claude Code:**
+  ```bash
+  claude mcp add --transport http mcp-demo http://localhost:4768/mcp --header "Authorization: Bearer <token>"
+  ```
+- **Your own code** with the SDK (this is what `connectToServer` does):
+  ```ts
+  new StreamableHTTPClientTransport(new URL(url), {
+    requestInit: { headers: { Authorization: `Bearer ${token}` } },
+  });
+  ```
+- **Quick check with `curl`:** a good token gets past the guard, so you see `400` or `406` from the MCP layer and not `401`:
+  ```bash
+  curl -i -X POST localhost:4768/mcp -H "Authorization: Bearer $MCP_TOKEN" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{}'
+  ```
+
+Limits:
+- **stdio:** this applies to HTTP only. The review server over stdio has no token.
+- **Config files:** a token in a config file is like a password, so don't commit it. It expires after `--ttl` (an hour by default), so use a longer `--ttl` for a client you configure once.
+- **OAuth login clients:** a client that runs the full OAuth flow (a login and a code exchange) can't get a token on its own, because our issuer has no `authorization_endpoint` or `token_endpoint`. Seen with Cursor and no token configured: it followed the `401` to the issuer's metadata and failed with `response_types_supported: expected array, received undefined`. Giving it the token in `headers` avoids that.
+
+## Try it end to end
+
+Run these from the repo root, in three terminal tabs. In each tab run `nvm use 24.22.2` first if `pnpm` is not found ([connecting-clients §8](../connecting-clients.md)).
+
+1. **Turn auth on and build.** Set `AUTH_REQUIRED=1` in `packages/server/.env`, then run `pnpm build`.
+2. **Tab 1, issuer:** `pnpm issuer serve`. Expect `Token issuer on http://localhost:4769 …`.
+3. **Tab 2, MCP server:** `pnpm start:http`. Stop any older server on 4768 first.
+4. **Tab 3, check the guard:**
+   ```bash
+   curl -si -X POST localhost:4768/mcp -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{}' | grep -iE "^HTTP|www-auth"
+   ```
+   Expect `401` and a `WWW-Authenticate` line.
+5. **CLI without a token:** `pnpm client`. Expect "The server needs a token and MCP_TOKEN is not set."
+6. **CLI with a token:**
+   ```bash
+   export MCP_TOKEN=$(pnpm --silent issuer token --sub alice --scope "mcp:tools")
+   pnpm client
+   ```
+   Expect the list of tools. A wrong or expired token prints "The server refused the token".
+7. **Dashboard** (not tested end to end): put `MCP_TOKEN=<token>` in `packages/web/.env`, run `pnpm web:dev`, open `localhost:4767`. Without the token it shows "The server needs a token".
+8. **Cursor or the Inspector** (not tested with a token): send the header `Authorization: Bearer <token>`; snippets are in [Using other MCP clients](#using-other-mcp-clients). Without a token, Cursor starts an OAuth flow and fails, as described there. Whether Cursor sends custom `headers` from `mcp.json` is unconfirmed.
+9. **Turn it off:** set `AUTH_REQUIRED=0` and restart the server.
+
+Steps 1 to 6 were run against a real server and issuer on spare ports.

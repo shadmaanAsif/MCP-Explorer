@@ -29,3 +29,4 @@ Goal · decisions made (and the ones still open) · steps, each with *what chang
 - Say what is unverified (a spec detail, a library behaviour) in the plan instead of asserting it. Step 1 of a stage may be "read the spec".
 - A plan is not a promise. Update it when reality changes, and keep the README and the published artifact in sync.
 - When a stage starts, its plan file stays, and the branch doc (`docs/branches/NN-…`) records what actually happened.
+- Every stage's branch doc ends with a **Try it end to end** section: numbered steps from a clean start to the finished feature, each with the exact command and the expected output. Mark any step that was not run as untested. Link to it from `docs/connecting-clients.md`.

@@ -50,7 +50,7 @@ Hono middleware on `/mcp`: read `Authorization: Bearer`, verify signature, issue
 The CLI client and the web dashboard send a token (from an env var), and the client reports a `401` with the metadata URL rather than a bare failure.
 *Done when:* with auth on, `pnpm client` and the dashboard work with a token and show a clear message without one.
 
-**9.5 Tests and docs.**
+**9.5 Tests and docs. (done)**
 Contract and HTTP tests, a mutation check (remove the audience check, a test must fail), `docs/branches/17-stage-9-authentication.md`, `docs/connecting-clients.md` section on tokens, README row, artifact.
 *Done when:* CI green and the branch doc matches what was built.
 

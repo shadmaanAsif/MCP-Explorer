@@ -116,7 +116,7 @@ The web dashboard reconnects by itself after a server restart (it drops its stal
 
 ## 8. Gotchas
 
-- **`pnpm: command not found`**: nvm keeps global tools per Node version. Use a version that has pnpm (`nvm use 24.8.0`) or install it there with `npm install -g pnpm`. `nvm alias default 24.8.0` makes new terminals use it.
+- **`pnpm: command not found`**: nvm keeps global tools per Node version. Switch this terminal to a version that has pnpm (`nvm use 24.22.2`, the version CI uses) or install it for your current version with `npm install -g pnpm`. `nvm use` only affects the current terminal and leaves your default Node version unchanged.
 - **Port in use**: `lsof -nP -iTCP:4768 -sTCP:LISTEN` shows what holds the port.
 - **Stateless mode forgets everything**: `set_home_location` followed by `get_home_weather` only works in stateful HTTP or stdio.
 - **Debugging in VS Code**: `tsconfig.base.json` has `"sourceMap": true` so breakpoints in `.ts` files bind. Run `pnpm build` after changing code, because the debugger runs the build output.
@@ -184,6 +184,39 @@ That only helps when the server runs on the same machine as the project. A serve
 ### Limits
 
 `run_checks` runs the project's `build`, `test` and `typecheck` scripts with the project's own package manager (npm, pnpm, yarn or bun, chosen from `packageManager` in `package.json`, then the lockfile). A script the project doesn't have is reported as `skipped`, and each result shows the command that ran. It runs the scripts as you, so they can write build output, but pnpm is stopped from installing dependencies or writing a lockfile into the project. None of this was tested in Cursor end to end.
+
+## 10. Using tokens (Stage 9)
+
+Over HTTP the server can require a token on every request to `/mcp`. It is off by default, so nothing above changes until you turn it on. stdio is never guarded.
+
+1. **Turn it on.** In `packages/server/.env` set `AUTH_REQUIRED=1`, then restart `pnpm start:http`.
+2. **Start the issuer** in its own tab: `pnpm issuer serve`. The server fetches the public key from it, so it must be running while auth is on (if it is down, `/mcp` answers `503`).
+3. **Make a token** and keep it in a variable:
+   ```bash
+   export MCP_TOKEN=$(pnpm --silent issuer token --sub alice --scope "mcp:tools")
+   ```
+   `--ttl` sets the lifetime in seconds (default one hour). There is no refresh: when it expires, make a new one.
+4. **Give it to the client.**
+   - **CLI client:** `MCP_TOKEN=... pnpm client`, or put `MCP_TOKEN` in `packages/client/.env`.
+   - **Dashboard:** put `MCP_TOKEN` in `packages/web/.env` and restart it. The token stays on the server side.
+   - **Inspector or another client:** send the header `Authorization: Bearer <token>`.
+5. **Check it.** With no token, the call is refused:
+   ```bash
+   curl -i -X POST localhost:4768/mcp -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{}'
+   ```
+   Expect `401` and a `WWW-Authenticate` header that holds the metadata address.
+
+| What you send | Answer |
+|---|---|
+| No token | `401`, with `resource_metadata` and `scope` in `WWW-Authenticate` |
+| Malformed `Authorization` header | `400` |
+| Wrong key, expired, or made for another server | `401` |
+| Valid token | works; the token is checked on every request, not once per session |
+| Issuer down | `503` |
+
+The CLI and the dashboard print a clear message on `401` that says whether the token was missing or refused. The `/.well-known/oauth-protected-resource` routes are public, so a client can find the issuer before it has a token.
+
+For the full walk-through (three tabs, expected output at each step) and how to use a token from Cursor, the Inspector or Claude Code, see [Stage 9: try it end to end](branches/17-stage-9-authentication.md#try-it-end-to-end).
 
 ## Ports and settings
 
