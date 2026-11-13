@@ -631,3 +631,53 @@ describe('bearer auth end to end (Stage 9.3)', () => {
     });
   });
 });
+
+describe('Origin check (Stage 10.2)', () => {
+  let server: HttpServer;
+  beforeAll(async () => {
+    server = await startHttpServer({ ALLOWED_ORIGINS: 'http://app.test, http://other.test/' });
+  });
+  afterAll(async () => {
+    await server.stop();
+  });
+
+  const post = (origin?: string) =>
+    fetch(server.url, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, ...(origin ? { Origin: origin } : {}) },
+      body: JSON.stringify(initializeBody)
+    });
+
+  it('refuses a foreign Origin with 403', async () => {
+    const res = await post('http://evil.test');
+    expect(res.status).toBe(403);
+    expect((await res.json()).error.message).toBe('Origin not allowed');
+  });
+
+  it('refuses the literal "null" origin of a sandboxed page', async () => {
+    expect((await post('null')).status).toBe(403);
+  });
+
+  it('allows listed origins, ignoring case and a trailing slash', async () => {
+    expect((await post('http://app.test')).status).toBe(200);
+    expect((await post('HTTP://OTHER.test')).status).toBe(200);
+  });
+
+  it('allows a request with no Origin (curl, the CLI, Cursor)', async () => {
+    expect((await post()).status).toBe(200);
+  });
+
+  it('refuses the origin before any token check', async () => {
+    const guarded = await startHttpServer({ AUTH_REQUIRED: '1', ISSUER_URL: 'http://127.0.0.1:1' });
+    try {
+      const res = await fetch(guarded.url, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, Origin: 'http://evil.test' },
+        body: JSON.stringify(initializeBody)
+      });
+      expect(res.status).toBe(403);
+    } finally {
+      await guarded.stop();
+    }
+  });
+});

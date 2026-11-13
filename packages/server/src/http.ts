@@ -8,6 +8,7 @@ import { bearerAuth, type AuthInfo } from './auth/middleware.js';
 import { scopeGuard } from './auth/scopes.js';
 import { resourceMetadataApp } from './auth/resource-metadata.js';
 import { createServer, type SessionState } from './create-server.js';
+import { originGuard, parseAllowedOrigins } from './http-guards.js';
 
 // MCP_SERVER_PORT is the project's name for it; PORT is kept as a fallback for hosts that set it.
 const PORT = Number(process.env.MCP_SERVER_PORT ?? process.env.PORT ?? 4768);
@@ -189,6 +190,9 @@ app.use('*', async (c, next) => {
 
 // Public: a client reads this before it has a token (Stage 9.2).
 app.route('/', resourceMetadataApp(MCP_SERVER_URL, ISSUER_URL));
+// Stage 10.2: always on (not behind AUTH_REQUIRED). A foreign Origin is refused
+// before any token check, so a browser page cannot even probe the server.
+app.use(MCP_PATH, originGuard(parseAllowedOrigins(process.env.ALLOWED_ORIGINS)));
 // Stage 9.3: with AUTH_REQUIRED=1 every /mcp request needs a valid Bearer token.
 // Off by default until the CLI client and dashboard can send one (9.4).
 if (process.env.AUTH_REQUIRED === '1') {
