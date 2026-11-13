@@ -1,6 +1,6 @@
 # Plan: Stage 10, authorization and hardening
 
-**Phase 2, stage 2 of 5.** Branch: `20-stage-10-authorization-hardening` (number set when the branch is cut, see D6). Status: in progress (10.1 built).
+**Phase 2, stage 2 of 5.** Branch: `20-stage-10-authorization-hardening` (number set when the branch is cut, see D6). Status: in progress (10.1 and 10.2 built).
 
 ## Goal
 
@@ -35,7 +35,7 @@ Add `src/auth/scopes.ts` with the tool-to-scope map and a middleware that runs a
 *Files:* `src/auth/scopes.ts` (new), `src/http.ts`, `test/auth-scopes.test.ts` (new).
 *Done when:* a token with only `weather:use` can call `get_weather` and gets `403` on `run_checks`; a session id used with another `sub` gets `403`; a test fails when the scope check is removed.
 
-**10.2 `Origin` check.**
+**10.2 `Origin` check. (built)**
 The spec says a server MUST validate `Origin` on HTTP, to stop DNS rebinding from a browser. `ALLOWED_ORIGINS` (comma list, default: the dashboard's origin and `http://localhost`). A request with no `Origin` (curl, the CLI, Cursor) is allowed. A listed or missing origin passes, anything else gets `403`. Check whether the SDK's own host validation is worth using as well.
 *Files:* `src/http-guards.ts` (new), `src/http.ts`, tests.
 *Done when:* `curl -H 'Origin: http://evil.test'` gets `403`, the dashboard still works, and a test covers both.
