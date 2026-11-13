@@ -4,7 +4,8 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { Hono, type Context } from 'hono';
-import { bearerAuth } from './auth/middleware.js';
+import { bearerAuth, type AuthInfo } from './auth/middleware.js';
+import { scopeGuard } from './auth/scopes.js';
 import { resourceMetadataApp } from './auth/resource-metadata.js';
 import { createServer, type SessionState } from './create-server.js';
 
@@ -25,7 +26,7 @@ const MODE = process.env.MCP_MODE === 'stateless' ? 'stateless' : 'stateful';
 // Hono hands us a web-standard Request and expects a Response back, so the
 // MCP side uses the SDK's web-standard transport (the Node transport is a
 // wrapper around it).
-function jsonRpcError(c: Context, status: 400 | 404 | 500, code: number, message: string) {
+function jsonRpcError(c: Context, status: 400 | 403 | 404 | 500, code: number, message: string) {
   return c.json({ jsonrpc: '2.0', error: { code, message }, id: null }, status);
 }
 
@@ -99,11 +100,16 @@ type Session = {
   transport: WebStandardStreamableHTTPServerTransport;
   state: SessionState;
   lastSeen: number;
+  /** The `sub` that opened the session (only when auth is on). Stage 10.1. */
+  owner?: string;
 };
+
+// The caller bearerAuth verified, or undefined when auth is off.
+const callerOf = (c: Context) => (c as Context<{ Variables: { auth?: AuthInfo } }>).get('auth')?.subject;
 
 const sessions = new Map<string, Session>();
 
-async function createSession(): Promise<Session> {
+async function createSession(owner?: string): Promise<Session> {
   const state: SessionState = {};
   const server = createServer(state);
   const transport = new WebStandardStreamableHTTPServerTransport({
@@ -115,7 +121,7 @@ async function createSession(): Promise<Session> {
       console.error(`[mcp-demo] session ${id} opened (${sessions.size} active)`);
     }
   });
-  const session: Session = { server, transport, state, lastSeen: Date.now() };
+  const session: Session = { server, transport, state, lastSeen: Date.now(), owner };
   transport.onclose = () => {
     const id = transport.sessionId;
     if (id && sessions.delete(id)) console.error(`[mcp-demo] session ${id} closed (${sessions.size} active)`);
@@ -134,6 +140,11 @@ async function handleStateful(c: Context) {
       // over with a new initialize.
       return jsonRpcError(c, 404, -32001, 'Session not found');
     }
+    // A session belongs to the caller that opened it: another valid token
+    // must not be able to ride on it.
+    if (session.owner !== undefined && session.owner !== callerOf(c)) {
+      return jsonRpcError(c, 403, -32000, 'This session belongs to another caller');
+    }
     session.lastSeen = Date.now();
     // POST (requests), GET (server → client stream), DELETE (end session)
     // are all handled by the session's own transport.
@@ -149,7 +160,7 @@ async function handleStateful(c: Context) {
   if (!isInitializeRequest(body)) {
     return jsonRpcError(c, 400, -32000, 'Missing Mcp-Session-Id: send an initialize request first');
   }
-  const session = await createSession();
+  const session = await createSession(callerOf(c));
   return session.transport.handleRequest(c.req.raw, { parsedBody: body });
 }
 
@@ -190,6 +201,8 @@ if (process.env.AUTH_REQUIRED === '1') {
       scope: process.env.AUTH_SCOPE || 'mcp:tools',
     }),
   );
+  // Stage 10.1: a valid token is not enough; each tool needs its own scope.
+  app.use(MCP_PATH, scopeGuard(new URL('/.well-known/oauth-protected-resource/mcp', MCP_SERVER_URL).href));
 }
 app.all(MCP_PATH, (c) => (MODE === 'stateful' ? handleStateful(c) : handleStateless(c)));
 app.notFound((c) => c.body(null, 404));

@@ -579,4 +579,55 @@ describe('bearer auth end to end (Stage 9.3)', () => {
     });
     expect(noToken.status).toBe(401);
   });
+
+  describe('scopes and session owner (Stage 10.1)', () => {
+    const connect = async (token: string) => {
+      const client = new Client({ name: 'test-client', version: '0.0.0' });
+      await client.connect(
+        new StreamableHTTPClientTransport(new URL(server.url), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }),
+      );
+      return client;
+    };
+
+    it('a weather:use token can call add and is refused run_checks with 403', async () => {
+      const token = await createToken(keys, { issuer: issuerUrl, subject: 'alice', audience, scope: 'mcp:tools weather:use' });
+      const client = await connect(token);
+      const ok = await client.callTool({ name: 'add', arguments: { a: 1, b: 2 } });
+      expect(ok.isError).toBeFalsy();
+      await client.close();
+
+      // The client hides the status, so check the refusal with a raw request.
+      const init = await fetch(server.url, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, Authorization: `Bearer ${token}` },
+        body: JSON.stringify(initializeBody),
+      });
+      const denied = await fetch(server.url, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, Authorization: `Bearer ${token}`, 'Mcp-Session-Id': init.headers.get('mcp-session-id')! },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'run_checks', arguments: { checks: ['test'] } } }),
+      });
+      expect(denied.status).toBe(403);
+      expect(denied.headers.get('www-authenticate')).toContain('scope="review:run"');
+    });
+
+    it('a session id used with another caller\'s token gets 403', async () => {
+      const alice = await createToken(keys, { issuer: issuerUrl, subject: 'alice', audience, scope: 'mcp:tools' });
+      const bob = await createToken(keys, { issuer: issuerUrl, subject: 'bob', audience, scope: 'mcp:tools' });
+      const init = await fetch(server.url, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, Authorization: `Bearer ${alice}` },
+        body: JSON.stringify(initializeBody),
+      });
+      const sessionId = init.headers.get('mcp-session-id')!;
+      const call = (token: string) =>
+        fetch(server.url, {
+          method: 'POST',
+          headers: { ...JSON_HEADERS, Authorization: `Bearer ${token}`, 'Mcp-Session-Id': sessionId },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
+        });
+      expect((await call(alice)).status).toBe(200);
+      expect((await call(bob)).status).toBe(403);
+    });
+  });
 });
