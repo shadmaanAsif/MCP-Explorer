@@ -195,7 +195,7 @@ Run these from the repo root, in three terminal tabs. In each tab run `nvm use 2
 5. **CLI without a token:** `pnpm client`. Expect "The server needs a token and MCP_TOKEN is not set."
 6. **CLI with a token:**
    ```bash
-   export MCP_TOKEN=$(pnpm --silent issuer token --sub alice --scope "mcp:tools")
+   export MCP_TOKEN=$(pnpm --silent issuer token --sub alice --scope "mcp:tools weather:use")
    pnpm client
    ```
    Expect the list of tools. A wrong or expired token prints "The server refused the token".

@@ -193,7 +193,7 @@ Over HTTP the server can require a token on every request to `/mcp`. It is off b
 2. **Start the issuer** in its own tab: `pnpm issuer serve`. The server fetches the public key from it, so it must be running while auth is on (if it is down, `/mcp` answers `503`).
 3. **Make a token** and keep it in a variable:
    ```bash
-   export MCP_TOKEN=$(pnpm --silent issuer token --sub alice --scope "mcp:tools")
+   export MCP_TOKEN=$(pnpm --silent issuer token --sub alice --scope "mcp:tools weather:use")
    ```
    `--ttl` sets the lifetime in seconds (default one hour). There is no refresh: when it expires, make a new one.
 4. **Give it to the client.**
