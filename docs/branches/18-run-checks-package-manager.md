@@ -8,7 +8,7 @@
 
 ## What changed
 
-All in [`review.ts`](../../packages/server/src/review.ts), `run_checks` only:
+All in `review.ts` (since branch 19 [`review/helpers/checks.ts`](../../packages/server/src/review/helpers/checks.ts)), `run_checks` only:
 
 | Before | Now |
 |---|---|

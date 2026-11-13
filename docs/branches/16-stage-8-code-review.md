@@ -14,7 +14,7 @@ Stages 1–7 built the server and its plumbing. Stage 8 gives it a job: helping 
 | Tool | `run_checks(checks, root?)` | The model | Runs `build`, `test` and/or `typecheck` in order with the project's own package manager (`npm run <name>`, `pnpm run <name>`, and so on); a missing script is skipped. Reports progress after each check; a client cancel kills the running check (stateful mode only). |
 | Resource | `repo://file/{+path}` | The user or app attaches it | The same files as `read_file`, as context, with a file list and path completion. It has no `root` argument. |
 
-All of it lives in [`review.ts`](../../packages/server/src/review.ts), registered from `createServer()` with one line, like `catalog.ts`.
+All of it lives in `review.ts` (since branch 19 the [`review/`](../../packages/server/src/review) folder), registered from `createServer()` with one line, like `catalog.ts`.
 
 ## Which repo it reviews
 

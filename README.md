@@ -69,6 +69,7 @@ Every branch gets a global sequence number, and every numbered branch has its ow
 | 16 | [`16-stage-8-code-review`](docs/branches/16-stage-8-code-review.md) | Stage 8: a code review server (`get_diff`, `read_file`, `run_checks`, a `review_code` prompt, a file resource), with a `root` argument, client roots and path and command safety checks. |
 | 17 | [`17-stage-9-authentication`](docs/branches/17-stage-9-authentication.md) | Stage 9: authentication. First commit: the roadmap regrouped into three phases with numbered steps, a planning format ([`constitution/planning.md`](constitution/planning.md)) and the [Stage 9 plan](docs/plans/stage-9-authentication.md). Then the build: token issuer, protected-resource metadata, bearer middleware, clients send the token, tests and docs (181 tests). |
 | 18 | [`18-run-checks-package-manager`](docs/branches/18-run-checks-package-manager.md) | Fix: `run_checks` uses the project's own package manager (npm, pnpm, yarn, bun), skips scripts that don't exist, and no longer lets pnpm install into the reviewed repo. |
+| 19 | [`19-split-review-module`](docs/branches/19-split-review-module.md) | Refactor: `review.ts` (610 lines) split into a `review/` folder with a nested `helpers/`. No behaviour change. |
 
 > **Branch numbering:** every new branch — a numbered stage or a side exploration — gets the next global sequence number (`NN-description`), so the branch list alone shows true creation order, not just which stages happen to be numbered. `stage-1-basic-server` and `explore-mcp-client` predate the convention (they are #1 and #2) and keep their original names. #3 turned out to be a side exploration rather than Stage 2, which is why the counter is global and does not reserve numbers for stages in advance. Adding a branch means adding its file in `docs/branches/` and a row to the table above.
 
@@ -160,7 +161,7 @@ Green = built and merged, amber = the next stage to plan and build. Everything e
 | **12. Observability** | `NN-stage-12-observability` | See the server in production and stop it cleanly. | 12.1 structured logs with a session id · 12.2 health and readiness · 12.3 metrics · 12.4 OpenTelemetry traces · 12.5 graceful shutdown |
 | **13. Containerize and deploy** | `NN-stage-13-containerize-deploy` | Ship it, update it, roll it back. | 13.1 Dockerfile · 13.2 env config · 13.3 gateway with TLS and no SSE buffering · 13.4 CD pipeline · 13.5 tool versioning policy |
 
-Side branches that may come up during Phase 2 (not stages): **split `review.ts` (610 lines) into a `review/` folder with a nested `helpers/` (`roots`, `files`, `git`, `checks`, `errors`), as a pure move with no behaviour change, picked up after Stage 9 and before Stage 10**; background checks (start, then fetch the result) for clients with short timeouts; npm package prep for the stdio server.
+Side branches that may come up during Phase 2 (not stages): background checks (start, then fetch the result) for clients with short timeouts; npm package prep for the stdio server.
 
 ### Phase 3 — Build the client *(planned: Stages 14–18)*
 
