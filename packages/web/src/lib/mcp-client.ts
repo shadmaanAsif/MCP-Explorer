@@ -11,7 +11,12 @@ const globalForMcp = globalThis as unknown as { mcpClientPromise?: Promise<Clien
 
 export function getClient(): Promise<Client> {
   if (!globalForMcp.mcpClientPromise) {
-    globalForMcp.mcpClientPromise = connectToServer(process.env.MCP_SERVER_URL);
+    // A failed connect (for example a 401) must not stay cached, or every later
+    // call would reuse the rejection.
+    globalForMcp.mcpClientPromise = connectToServer(process.env.MCP_SERVER_URL).catch((err) => {
+      globalForMcp.mcpClientPromise = undefined;
+      throw err;
+    });
   }
   return globalForMcp.mcpClientPromise;
 }

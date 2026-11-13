@@ -5,4 +5,9 @@ launch.json
 .next/
 next-env.d.ts
 *.tsbuildinfo
+
+# local token issuer key (Stage 9)
 .auth/
+
+# local config; each package commits a .env.example template
+.env

@@ -130,6 +130,8 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error('Client error:', error);
+  // A 401 already carries a full "what to do" message; no need for a stack.
+  if (error?.name === 'AuthRequiredError') console.error(error.message);
+  else console.error('Client error:', error);
   process.exit(1);
 });

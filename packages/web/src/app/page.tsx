@@ -9,6 +9,27 @@ import { PromptCard } from '@/components/PromptCard';
 export const dynamic = 'force-dynamic';
 
 export default async function Page() {
+  try {
+    return await Dashboard();
+  } catch (err) {
+    // The server wants a token (Stage 9): show what to do instead of an error page.
+    if ((err as Error).name === 'AuthRequiredError') {
+      return (
+        <main>
+          <h1>MCP Explorer — Dashboard</h1>
+          <h2>The server needs a token</h2>
+          <p>{(err as Error).message}</p>
+          <p>
+            Put the token in <code>MCP_TOKEN</code> in <code>packages/web/.env</code> and restart the dashboard.
+          </p>
+        </main>
+      );
+    }
+    throw err;
+  }
+}
+
+async function Dashboard() {
   // One round trip per list, inside one withClient so a restarted server is
   // retried as a whole. A server only supports a list if it declared that
   // capability when connecting, so check before asking.

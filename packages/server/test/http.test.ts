@@ -5,6 +5,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { LATEST_PROTOCOL_VERSION } from '@modelcontextprotocol/sdk/types.js';
+import { serve } from '@hono/node-server';
+import { createKeys, createToken, issuerApp } from '../src/auth/issuer.js';
 import { startHttpServer, type HttpServer } from './helpers/http-server.js';
 import { startWeatherStub, type WeatherStub } from './helpers/stub-weather.js';
 
@@ -458,5 +460,123 @@ describe('review tools over HTTP by default', () => {
   it('the weather tools still work on the same server', async () => {
     const r = await call('add', { a: 2, b: 3 });
     expect(textOf(r)).toBe('5');
+  });
+});
+
+describe('protected resource metadata (Stage 9.2)', () => {
+  let server: HttpServer;
+  beforeAll(async () => {
+    server = await startHttpServer({
+      MCP_SERVER_URL: 'http://mcp.example/mcp',
+      ISSUER_URL: 'http://issuer.example'
+    });
+  });
+  afterAll(async () => {
+    await server.stop();
+  });
+
+  const base = () => server.url.replace('/mcp', '');
+
+  it.each(['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp'])(
+    'serves %s with no token',
+    async (route) => {
+      const res = await fetch(base() + route);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        resource: 'http://mcp.example/mcp',
+        authorization_servers: ['http://issuer.example']
+      });
+    }
+  );
+
+  it('defaults to this server and the local issuer', async () => {
+    const plain = await startHttpServer({ MCP_SERVER_URL: '', ISSUER_URL: '' });
+    try {
+      const doc = await (await fetch(plain.url.replace('/mcp', '/.well-known/oauth-protected-resource'))).json();
+      expect(doc.resource).toBe(plain.url.replace('127.0.0.1', 'localhost'));
+      expect(doc.authorization_servers).toEqual(['http://localhost:4769']);
+    } finally {
+      await plain.stop();
+    }
+  });
+});
+
+describe('bearer auth end to end (Stage 9.3)', () => {
+  let server: HttpServer;
+  let issuer: { close: () => void };
+  let keys: Awaited<ReturnType<typeof createKeys>>;
+  let issuerUrl: string;
+  let audience: string;
+
+  beforeAll(async () => {
+    keys = await createKeys();
+    // The issuer on a free port, so the server fetches its keys over HTTP like it would in real life.
+    // The server only uses /jwks.json, so the app's own issuer string does not matter here.
+    const app = issuerApp(keys);
+    issuer = await new Promise<ReturnType<typeof serve>>((resolve) => {
+      const s = serve({ fetch: (r) => app.fetch(r), port: 0, hostname: '127.0.0.1' }, () => resolve(s));
+    });
+    issuerUrl = `http://127.0.0.1:${(issuer as unknown as { address(): { port: number } }).address().port}`;
+
+    // The MCP server needs its own address as the audience, so pick the port first.
+    server = await startHttpServer({ AUTH_REQUIRED: '1', ISSUER_URL: issuerUrl, MCP_SERVER_URL: '' });
+    // The server's default audience is its own address written with localhost.
+    audience = server.url.replace('127.0.0.1', 'localhost');
+  });
+  afterAll(async () => {
+    issuer.close();
+    await server.stop();
+  });
+
+  it('refuses a call with no token and points at the metadata', async () => {
+    const res = await fetch(server.url, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(initializeBody) });
+    expect(res.status).toBe(401);
+    expect(res.headers.get('www-authenticate')).toContain('resource_metadata=');
+  });
+
+  it('refuses a token made for another audience', async () => {
+    const token = await createToken(keys, { issuer: issuerUrl, subject: 'alice', audience: 'http://other/mcp' });
+    const res = await fetch(server.url, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, Authorization: `Bearer ${token}` },
+      body: JSON.stringify(initializeBody),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('lets a client with a valid token use the tools', async () => {
+    const token = await createToken(keys, { issuer: issuerUrl, subject: 'alice', audience, scope: 'mcp:tools' });
+    const client = new Client({ name: 'test-client', version: '0.0.0' });
+    const transport = new StreamableHTTPClientTransport(new URL(server.url), {
+      requestInit: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    await client.connect(transport);
+    const { tools } = await client.listTools();
+    expect(tools.length).toBeGreaterThan(0);
+    await client.close();
+  });
+
+  it('keeps the metadata route open', async () => {
+    const res = await fetch(server.url.replace('/mcp', '/.well-known/oauth-protected-resource'));
+    expect(res.status).toBe(200);
+  });
+
+  it('checks the token on every request: a session id alone is refused', async () => {
+    const token = await createToken(keys, { issuer: issuerUrl, subject: 'alice', audience, scope: 'mcp:tools' });
+    const init = await fetch(server.url, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, Authorization: `Bearer ${token}` },
+      body: JSON.stringify(initializeBody),
+    });
+    expect(init.status).toBe(200);
+    const sessionId = init.headers.get('mcp-session-id');
+    expect(sessionId).toBeTruthy();
+
+    const noToken = await fetch(server.url, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, 'Mcp-Session-Id': sessionId! },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
+    });
+    expect(noToken.status).toBe(401);
   });
 });
