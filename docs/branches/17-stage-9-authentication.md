@@ -146,9 +146,9 @@ Check it: `node -e "console.log(process.argv.slice(2))" token --sub alice` print
 
 ## Using other MCP clients
 
-Every HTTP client does the same thing: it sends `Authorization: Bearer <token>` on each request to `http://localhost:4768/mcp`. Only where you set the header differs. Make the token first (`pnpm --silent issuer token --sub alice --scope "mcp:tools"`, see [9.1](#91-token-issuer)). **None of the clients below were tested against this server, apart from our own CLI.**
+Every HTTP client does the same thing: it sends `Authorization: Bearer <token>` on each request to `http://localhost:4768/mcp`. Only where you set the header differs. Make the token first (`pnpm --silent issuer token --sub alice --scope "mcp:tools"`, see [9.1](#91-token-issuer)). **Tested against this server: our own CLI and Cursor (with `headers`). The others below are untested.**
 
-- **Cursor** (`.cursor/mcp.json`). Whether Cursor sends custom `headers` is unconfirmed:
+- **Cursor** (`.cursor/mcp.json`). Tested: with this `headers` block Cursor connected to the server with auth on.
   ```json
   {
     "mcpServers": {
@@ -178,7 +178,7 @@ Every HTTP client does the same thing: it sends `Authorization: Bearer <token>` 
 Limits:
 - **stdio:** this applies to HTTP only. The review server over stdio has no token.
 - **Config files:** a token in a config file is like a password, so don't commit it. It expires after `--ttl` (an hour by default), so use a longer `--ttl` for a client you configure once.
-- **OAuth login clients:** a client that runs the full OAuth flow (a login and a code exchange) can't get a token on its own, because our issuer has no `authorization_endpoint` or `token_endpoint`. Seen with Cursor and no token configured: it followed the `401` to the issuer's metadata and failed with `response_types_supported: expected array, received undefined`. Giving it the token in `headers` avoids that.
+- **OAuth login clients:** a client that runs the full OAuth flow (a login and a code exchange) can't get a token on its own, because our issuer has no `authorization_endpoint` or `token_endpoint`. Seen with Cursor and no token configured: it followed the `401` to the issuer's metadata and failed with `response_types_supported: expected array, received undefined`. Giving it the token in `headers` avoids that, and Cursor then connects.
 
 ## Try it end to end
 
@@ -200,7 +200,7 @@ Run these from the repo root, in three terminal tabs. In each tab run `nvm use 2
    ```
    Expect the list of tools. A wrong or expired token prints "The server refused the token".
 7. **Dashboard** (not tested end to end): put `MCP_TOKEN=<token>` in `packages/web/.env`, run `pnpm web:dev`, open `localhost:4767`. Without the token it shows "The server needs a token".
-8. **Cursor or the Inspector** (not tested with a token): send the header `Authorization: Bearer <token>`; snippets are in [Using other MCP clients](#using-other-mcp-clients). Without a token, Cursor starts an OAuth flow and fails, as described there. Whether Cursor sends custom `headers` from `mcp.json` is unconfirmed.
+8. **Cursor** (tested): put the token in `headers` as shown in [Using other MCP clients](#using-other-mcp-clients), then toggle the server off and on in Cursor Settings → MCP. It connects. Without a token, Cursor starts an OAuth flow and fails, as described there. **Inspector** is untested.
 9. **Turn it off:** set `AUTH_REQUIRED=0` and restart the server.
 
-Steps 1 to 6 were run against a real server and issuer on spare ports.
+Steps 1 to 6 were run against a real server and issuer on spare ports. Step 8 was tried by hand in Cursor. Step 7 (the dashboard) was not run.
