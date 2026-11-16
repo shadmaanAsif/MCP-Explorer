@@ -1,6 +1,6 @@
 # Plan: Stage 10, authorization and hardening
 
-**Phase 2, stage 2 of 5.** Branch: `20-stage-10-authorization-hardening` (number set when the branch is cut, see D6). Status: in progress (10.1 and 10.2 built).
+**Phase 2, stage 2 of 5.** Branch: `20-stage-10-authorization-hardening` (number set when the branch is cut, see D6). Status: in progress (10.1 to 10.3 built).
 
 ## Goal
 
@@ -40,7 +40,7 @@ The spec says a server MUST validate `Origin` on HTTP, to stop DNS rebinding fro
 *Files:* `src/http-guards.ts` (new), `src/http.ts`, tests.
 *Done when:* `curl -H 'Origin: http://evil.test'` gets `403`, the dashboard still works, and a test covers both.
 
-**10.3 Rate and size limits.**
+**10.3 Rate and size limits. (built)**
 Hono's `bodyLimit` for the size cap (`MAX_BODY_BYTES`, default 1 MB, `413`). An in-memory token bucket per caller (the `sub`, or the client address when auth is off) with `RATE_LIMIT_PER_MINUTE` and a `429` with `Retry-After`. The limits live in memory, so they are per instance; Stage 11 revisits that.
 *Files:* `src/http-guards.ts`, `src/http.ts`, tests with a short window.
 *Done when:* an oversized body gets `413`, a burst past the limit gets `429` and recovers after the window.
