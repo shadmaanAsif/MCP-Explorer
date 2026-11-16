@@ -1,6 +1,6 @@
 # #20 — Stage 10: authorization and hardening (`20-stage-10-authorization-hardening`)
 
-**Status:** in progress. 10.1 to 10.3 built; 10.4 and 10.5 not started. Plan: [docs/plans/stage-10-authorization-hardening.md](../plans/stage-10-authorization-hardening.md).
+**Status:** in progress. 10.1 to 10.4 built; 10.5 not started. Plan: [docs/plans/stage-10-authorization-hardening.md](../plans/stage-10-authorization-hardening.md).
 
 Stage 9 answers "who is calling?". Stage 10 answers "what may they do, and what did they do?".
 
@@ -11,7 +11,7 @@ Stage 9 answers "who is calling?". Stage 10 answers "what may they do, and what 
 | 10.1 | Scopes per tool, and a session that belongs to its caller | Built |
 | 10.2 | `Origin` check | Built |
 | 10.3 | Rate and size limits | Built |
-| 10.4 | Audit log | Not started |
+| 10.4 | Audit log | Built |
 | 10.5 | Validated config and secrets | Not started |
 
 ## 10.1 Scopes per tool
@@ -79,6 +79,41 @@ pnpm --silent issuer token --sub alice --scope "mcp:tools weather:use"
 
 **Not done:** the limit is not per tool, and failed auth attempts are not rate limited.
 
+## 10.4 Audit log
+
+**The problem:** with scopes, a call can now be allowed or refused, and nothing recorded who did what. After a bad day you could not answer "who ran `run_checks`, and when?".
+
+**What it is:** one JSON line on the server's stderr for every tool call, from [`src/audit.ts`](../../packages/server/src/audit.ts).
+
+```json
+{"type":"audit","time":"2026-11-16T09:30:00.000Z","sub":"alice","session":"3f1c…","tool":"add","decision":"allowed","outcome":"ok","ms":3}
+{"type":"audit","time":"2026-11-16T09:30:02.000Z","sub":"alice","session":"3f1c…","tool":"run_checks","decision":"denied","missing":["review:run"]}
+```
+
+| Field | Meaning |
+|---|---|
+| `sub` | the token's `sub`, or `null` when auth is off |
+| `session` | the `Mcp-Session-Id`, or `null` (stateless mode) |
+| `tool` | the tool's name |
+| `decision` | `allowed` or `denied` |
+| `missing` | the scopes the caller lacked (denied only) |
+| `outcome`, `ms` | `ok` or `error`, and how long it took (allowed only) |
+
+**How it is written:**
+- **Allowed calls:** one wrapper around the SDK's single `tools/call` handler. Every tool is covered, a new tool needs no logging code, and so are an unknown tool name and a call whose arguments fail validation. The `sub` reaches it because `http.ts` now passes the verified caller to the SDK as `authInfo` (the token itself is not passed).
+- **Denied calls:** `scopeGuard` writes one line per tool the caller tried, then answers `403`.
+- **stdio:** nothing is logged, because there are no callers to tell apart.
+
+**What is never logged:** argument values and results. Only the tool name. Read it with `grep '"type":"audit"'`.
+
+**Not covered:**
+- **Other refusals:** a `401`, an Origin `403`, a `413` and a `429` are not audit lines. They stop before a tool is named, and the normal request log already shows their status.
+- **Other messages:** listing tools, reading a resource and getting a prompt are not logged, only `tools/call`.
+- **A separate debug log:** the tools' own `console.error` lines, such as `add called with a=…`, still print argument values to stderr. They are not part of the audit log, and I did not change them.
+- **No file or shipping:** it is stderr only. Sending it somewhere is Stage 12.
+
+**Proof:** 6 unit tests (`test/audit.test.ts`: allowed, error, unknown tool, listing, a review tool) and 2 end-to-end tests against the real server: one allowed and one denied line with the right fields and none of the argument values, and `sub: null` with auth off. With the wrapper and the denied-line write removed, 6 tests fail. 223 tests pass.
+
 ## Testing in MCP clients
 
 The `curl` steps in "Try it end to end" prove the server. This section is for trying the same limits from a real client. **Nothing here has been run in Cursor, the Inspector or Claude Code yet.** Stage 9 showed that Cursor connects with a token in `headers`. What Cursor shows for a `403` or `429` is not known, so check its MCP log if the chat shows only a generic failure.
@@ -136,6 +171,7 @@ Then ask it to call `add` (works) and `run_checks` (refused with `403`). The sam
 | Browser origin not in `ALLOWED_ORIGINS` | `403 Origin not allowed` |
 | More than `RATE_LIMIT_PER_MINUTE` calls in a minute | `429`, then fine after the `Retry-After` seconds |
 | Body over `MAX_BODY_BYTES` | `413` |
+| Any `tools/call`, allowed or refused | one `"type":"audit"` line in the server's terminal, with no argument values |
 
 ## Try it end to end
 
@@ -180,6 +216,11 @@ Then ask it to call `add` (works) and `run_checks` (refused with `403`). The sam
    ```bash
    for i in 1 2 3 4 5 6 7; do curl -si -X POST localhost:4768/mcp -H "Authorization: Bearer $WEATHER" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"ping"}' | grep -iE "^HTTP|retry-after"; done
    ```
-10. Remove both settings, turn auth off again (`AUTH_REQUIRED=0`) and restart the server.
+10. Check the audit log. In the server's terminal, each call above should have left one line. Stop the running server, then restart it with its output filtered:
+    ```bash
+    pnpm start:http 2>&1 | grep '"type":"audit"'
+    ```
+    Run steps 4 and 5 again with that running. Expect an `allowed` line for a permitted call and a `denied` line with `"missing":["review:run"]` for the refused `run_checks`. Neither line should show the arguments.
+11. Remove the settings from steps 8 and 9, turn auth off again (`AUTH_REQUIRED=0`) and restart the server.
 
-Steps 4 to 9 are the same checks the tests make; I have not run these exact `curl` lines by hand. Steps for 10.4 and 10.5 are added as each is built.
+Steps 4 to 10 are the same checks the tests make; I have not run these exact `curl` lines by hand. Steps for 10.5 are added as each is built.

@@ -1,6 +1,6 @@
 # Plan: Stage 10, authorization and hardening
 
-**Phase 2, stage 2 of 5.** Branch: `20-stage-10-authorization-hardening` (number set when the branch is cut, see D6). Status: in progress (10.1 to 10.3 built).
+**Phase 2, stage 2 of 5.** Branch: `20-stage-10-authorization-hardening` (number set when the branch is cut, see D6). Status: in progress (10.1 to 10.4 built).
 
 ## Goal
 
@@ -45,7 +45,7 @@ Hono's `bodyLimit` for the size cap (`MAX_BODY_BYTES`, default 1 MB, `413`). An 
 *Files:* `src/http-guards.ts`, `src/http.ts`, tests with a short window.
 *Done when:* an oversized body gets `413`, a burst past the limit gets `429` and recovers after the window.
 
-**10.4 Audit log.**
+**10.4 Audit log. (built)**
 One JSON line per tool call: time, `sub`, session id, tool, `allowed` or `denied` (with the missing scope), `ok` or `error`, duration. No argument values. Written by one function that the scope middleware and the tool path both call.
 *Files:* `src/audit.ts` (new), `src/http.ts`, tests that read the lines back.
 *Done when:* a denied call and an allowed call each produce one correct line, and no test output contains an argument value.
