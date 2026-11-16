@@ -2,6 +2,7 @@
 // WHAT they may call. One table maps each tool to the scope it needs, and one
 // middleware (after bearerAuth) enforces it, so no tool has its own check.
 import type { MiddlewareHandler } from 'hono';
+import { auditEvent, type AuditSink } from '../audit.js';
 import type { AuthInfo } from './middleware.js';
 
 /** Needed to reach /mcp at all. */
@@ -39,7 +40,10 @@ export function requiredScope(message: unknown): string | undefined {
   return undefined;
 }
 
-export function scopeGuard(resourceMetadataUrl: string): MiddlewareHandler<{ Variables: { auth?: AuthInfo } }> {
+export function scopeGuard(
+  resourceMetadataUrl: string,
+  sink?: AuditSink
+): MiddlewareHandler<{ Variables: { auth?: AuthInfo } }> {
   const deny = (c: Parameters<MiddlewareHandler>[0], needed: string[]) =>
     c.body(null, 403, {
       'WWW-Authenticate': `Bearer error="insufficient_scope", scope="${needed.join(' ')}", resource_metadata="${resourceMetadataUrl}"`,
@@ -49,7 +53,27 @@ export function scopeGuard(resourceMetadataUrl: string): MiddlewareHandler<{ Var
     const auth = c.get('auth');
     if (!auth) return next(); // auth is off
 
-    if (!auth.scopes.includes(BASE_SCOPE)) return deny(c, [BASE_SCOPE]);
+    const session = c.req.header('mcp-session-id') ?? null;
+    // Stage 10.4: a refused call still leaves a line, one per tool the caller tried.
+    const auditDenied = (messages: unknown[], missing: string[]) => {
+      for (const m of messages) {
+        const { method, params } = (m ?? {}) as { method?: unknown; params?: { name?: unknown } };
+        if (method === 'tools/call' && typeof params?.name === 'string') {
+          auditEvent({ sub: auth.subject, session, tool: params.name, decision: 'denied', missing }, sink);
+        }
+      }
+    };
+
+    if (!auth.scopes.includes(BASE_SCOPE)) {
+      let early: unknown;
+      try {
+        early = await c.req.json();
+      } catch {
+        early = undefined;
+      }
+      auditDenied(Array.isArray(early) ? early : [early], [BASE_SCOPE]);
+      return deny(c, [BASE_SCOPE]);
+    }
 
     // Hono caches the parsed body, so the handlers can read it again after us.
     let body: unknown;
@@ -64,7 +88,10 @@ export function scopeGuard(resourceMetadataUrl: string): MiddlewareHandler<{ Var
         messages.map(requiredScope).filter((s): s is string => s !== undefined && !auth.scopes.includes(s)),
       ),
     ];
-    if (missing.length > 0) return deny(c, missing);
+    if (missing.length > 0) {
+      auditDenied(messages, missing);
+      return deny(c, missing);
+    }
     return next();
   };
 }

@@ -762,3 +762,72 @@ describe('size and rate limits (Stage 10.3)', () => {
     }
   });
 });
+
+describe('audit log (Stage 10.4)', () => {
+  const auditLines = (logs: string) =>
+    logs
+      .split('\n')
+      .filter((l) => l.startsWith('{"type":"audit"'))
+      .map((l) => JSON.parse(l));
+
+  it('writes one line per allowed call and one per denied call, never the arguments', async () => {
+    const keys = await createKeys();
+    const app = issuerApp(keys);
+    const issuer = await new Promise<ReturnType<typeof serve>>((resolve) => {
+      const s = serve({ fetch: (r) => app.fetch(r), port: 0, hostname: '127.0.0.1' }, () => resolve(s));
+    });
+    const issuerUrl = `http://127.0.0.1:${(issuer as unknown as { address(): { port: number } }).address().port}`;
+    const server = await startHttpServer({ ...weatherEnv(), AUTH_REQUIRED: '1', ISSUER_URL: issuerUrl, MCP_SERVER_URL: '' });
+    try {
+      const audience = server.url.replace('127.0.0.1', 'localhost');
+      const token = await createToken(keys, { issuer: issuerUrl, subject: 'alice', audience, scope: 'mcp:tools weather:use' });
+      const headers = { ...JSON_HEADERS, Authorization: `Bearer ${token}` };
+
+      const init = await fetch(server.url, { method: 'POST', headers, body: JSON.stringify(initializeBody) });
+      const sessionId = init.headers.get('mcp-session-id')!;
+      const call = (id: number, name: string, args: unknown) =>
+        fetch(server.url, {
+          method: 'POST',
+          headers: { ...headers, 'Mcp-Session-Id': sessionId },
+          body: JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } })
+        });
+
+      expect((await call(2, 'add', { a: 4242, b: 7 })).status).toBe(200);
+      expect((await call(3, 'run_checks', { checks: ['test'], root: '/secret/path-xyz' })).status).toBe(403);
+      await sleep(100);
+
+      const lines = auditLines(server.logs());
+      expect(lines).toHaveLength(2);
+      expect(lines[0]).toMatchObject({ sub: 'alice', session: sessionId, tool: 'add', decision: 'allowed', outcome: 'ok' });
+      expect(lines[1]).toMatchObject({
+        sub: 'alice',
+        session: sessionId,
+        tool: 'run_checks',
+        decision: 'denied',
+        missing: ['review:run']
+      });
+      expect(lines[1].outcome).toBeUndefined();
+      // The audit lines only: a tool's own debug line ("add called with a=…") is a separate log.
+      const auditText = JSON.stringify(lines);
+      expect(auditText).not.toContain('4242');
+      expect(auditText).not.toContain('path-xyz');
+      expect(server.logs()).not.toContain(token);
+    } finally {
+      issuer.close();
+      await server.stop();
+    }
+  });
+
+  it('records sub as null when auth is off', async () => {
+    const server = await startHttpServer({ ...weatherEnv(), MCP_MODE: 'stateless' });
+    try {
+      const { client } = await connect(server.url);
+      await client.callTool({ name: 'add', arguments: { a: 1, b: 2 } });
+      await client.close();
+      await sleep(100);
+      expect(auditLines(server.logs())).toMatchObject([{ sub: null, tool: 'add', decision: 'allowed', outcome: 'ok' }]);
+    } finally {
+      await server.stop();
+    }
+  });
+});

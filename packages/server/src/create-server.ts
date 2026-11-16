@@ -1,3 +1,4 @@
+import { auditTools, type AuditSink } from './audit.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { registerCatalog } from './catalog.js';
@@ -124,11 +125,15 @@ export async function fetchWeather(latitude: number, longitude: number, callerSi
 // gone by the next.
 export type SessionState = { home?: { name: string; latitude: number; longitude: number } };
 
-export function createServer(session: SessionState = {}): McpServer {
+export function createServer(session: SessionState = {}, audit?: AuditSink): McpServer {
   const server = new McpServer({
     name: 'mcp-demo',
     version: '0.1.0'
   });
+  // Stage 10.4: HTTP passes a sink; stdio does not, and logs nothing. Must run
+  // before any registerTool call below, because the SDK installs its tools/call
+  // handler on the first one.
+  if (audit) auditTools(server, audit);
 
   // A "tool" is a function we expose to the client. The client can ask what
   // tools exist, see this description and inputSchema, and then call it with

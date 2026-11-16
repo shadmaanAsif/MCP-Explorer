@@ -7,6 +7,7 @@ import { Hono, type Context } from 'hono';
 import { bearerAuth, type AuthInfo } from './auth/middleware.js';
 import { scopeGuard } from './auth/scopes.js';
 import { resourceMetadataApp } from './auth/resource-metadata.js';
+import { auditToStderr } from './audit.js';
 import { createServer, type SessionState } from './create-server.js';
 import { getConnInfo } from '@hono/node-server/conninfo';
 import {
@@ -93,10 +94,10 @@ async function handleStateless(c: Context) {
     return c.body(null, 405, { Allow: 'POST' });
   }
   const body = await c.req.json();
-  const server = createServer();
+  const server = createServer({}, auditToStderr);
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);
-  const response = await transport.handleRequest(c.req.raw, { parsedBody: body });
+  const response = await transport.handleRequest(c.req.raw, { parsedBody: body, authInfo: authInfoOf(c) });
   return afterBody(response, () => {
     void transport.close();
     void server.close();
@@ -117,11 +118,18 @@ type Session = {
 // The caller bearerAuth verified, or undefined when auth is off.
 const callerOf = (c: Context) => (c as Context<{ Variables: { auth?: AuthInfo } }>).get('auth')?.subject;
 
+// What the tool handlers see as `extra.authInfo`, so the audit log knows who called.
+// The token itself is not passed on.
+const authInfoOf = (c: Context) => {
+  const auth = (c as Context<{ Variables: { auth?: AuthInfo } }>).get('auth');
+  return auth ? { token: '', clientId: auth.subject, scopes: auth.scopes } : undefined;
+};
+
 const sessions = new Map<string, Session>();
 
 async function createSession(owner?: string): Promise<Session> {
   const state: SessionState = {};
-  const server = createServer(state);
+  const server = createServer(state, auditToStderr);
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: randomUUID,
     // The id only exists once the initialize request is handled, so the
@@ -159,7 +167,7 @@ async function handleStateful(c: Context) {
     // POST (requests), GET (server → client stream), DELETE (end session)
     // are all handled by the session's own transport.
     const body = c.req.method === 'POST' ? await c.req.json() : undefined;
-    return session.transport.handleRequest(c.req.raw, { parsedBody: body });
+    return session.transport.handleRequest(c.req.raw, { parsedBody: body, authInfo: authInfoOf(c) });
   }
 
   // No session id: the only valid request is a POST that opens a session.
@@ -171,7 +179,7 @@ async function handleStateful(c: Context) {
     return jsonRpcError(c, 400, -32000, 'Missing Mcp-Session-Id: send an initialize request first');
   }
   const session = await createSession(callerOf(c));
-  return session.transport.handleRequest(c.req.raw, { parsedBody: body });
+  return session.transport.handleRequest(c.req.raw, { parsedBody: body, authInfo: authInfoOf(c) });
 }
 
 // Clients that vanish without sending DELETE would otherwise leak sessions.
@@ -217,7 +225,7 @@ if (process.env.AUTH_REQUIRED === '1') {
     }),
   );
   // Stage 10.1: a valid token is not enough; each tool needs its own scope.
-  app.use(MCP_PATH, scopeGuard(new URL('/.well-known/oauth-protected-resource/mcp', MCP_SERVER_URL).href));
+  app.use(MCP_PATH, scopeGuard(new URL('/.well-known/oauth-protected-resource/mcp', MCP_SERVER_URL).href, auditToStderr));
 }
 // Stage 10.3: after the auth guards, so the caller is the token's `sub`; with auth
 // off it is the client address. RATE_LIMIT_PER_MINUTE=0 turns the limit off.
