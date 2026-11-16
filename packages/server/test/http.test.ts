@@ -681,3 +681,84 @@ describe('Origin check (Stage 10.2)', () => {
     }
   });
 });
+
+describe('size and rate limits (Stage 10.3)', () => {
+  const post = (url: string, body: unknown = initializeBody) =>
+    fetch(url, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body) });
+
+  it('refuses a body over MAX_BODY_BYTES with 413 and accepts one under it', async () => {
+    const server = await startHttpServer({ MAX_BODY_BYTES: '400' });
+    try {
+      expect((await post(server.url)).status).toBe(200);
+      const big = await post(server.url, { ...initializeBody, padding: 'x'.repeat(1000) });
+      expect(big.status).toBe(413);
+      expect((await big.json()).error.message).toContain('over 400 bytes');
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('answers 429 with Retry-After past the rate, and recovers after the window', async () => {
+    // 60 per minute: a burst of 60, then one more token every second.
+    const server = await startHttpServer({ RATE_LIMIT_PER_MINUTE: '60' });
+    try {
+      const ping = () => post(server.url, { jsonrpc: '2.0', id: 9, method: 'ping' });
+      let refused: Response | undefined;
+      for (let i = 0; i < 70 && !refused; i++) {
+        const res = await ping();
+        if (res.status === 429) refused = res;
+      }
+      expect(refused).toBeDefined();
+      expect(Number(refused!.headers.get('retry-after'))).toBeGreaterThanOrEqual(1);
+      await sleep(1_200);
+      expect((await ping()).status).not.toBe(429);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('with auth on, the limit is per token subject, so one caller cannot starve another', async () => {
+    const keys = await createKeys();
+    const app = issuerApp(keys);
+    const issuer = await new Promise<ReturnType<typeof serve>>((resolve) => {
+      const s = serve({ fetch: (r) => app.fetch(r), port: 0, hostname: '127.0.0.1' }, () => resolve(s));
+    });
+    const issuerUrl = `http://127.0.0.1:${(issuer as unknown as { address(): { port: number } }).address().port}`;
+    const server = await startHttpServer({
+      AUTH_REQUIRED: '1',
+      ISSUER_URL: issuerUrl,
+      MCP_SERVER_URL: '',
+      RATE_LIMIT_PER_MINUTE: '3'
+    });
+    try {
+      const audience = server.url.replace('127.0.0.1', 'localhost');
+      const alice = await createToken(keys, { issuer: issuerUrl, subject: 'alice', audience, scope: 'mcp:tools' });
+      const bob = await createToken(keys, { issuer: issuerUrl, subject: 'bob', audience, scope: 'mcp:tools' });
+      const call = (token: string) =>
+        fetch(server.url, {
+          method: 'POST',
+          headers: { ...JSON_HEADERS, Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' })
+        });
+      const statuses: number[] = [];
+      for (let i = 0; i < 5; i++) statuses.push((await call(alice)).status);
+      expect(statuses.slice(0, 3)).not.toContain(429);
+      expect(statuses.slice(3)).toEqual([429, 429]);
+      expect((await call(bob)).status).not.toBe(429);
+    } finally {
+      issuer.close();
+      await server.stop();
+    }
+  });
+
+  it('turns the rate limit off with RATE_LIMIT_PER_MINUTE=0', async () => {
+    const server = await startHttpServer({ RATE_LIMIT_PER_MINUTE: '0' });
+    try {
+      for (let i = 0; i < 80; i++) {
+        expect((await post(server.url, { jsonrpc: '2.0', id: i, method: 'ping' })).status).not.toBe(429);
+      }
+    } finally {
+      await server.stop();
+    }
+  });
+});

@@ -8,7 +8,16 @@ import { bearerAuth, type AuthInfo } from './auth/middleware.js';
 import { scopeGuard } from './auth/scopes.js';
 import { resourceMetadataApp } from './auth/resource-metadata.js';
 import { createServer, type SessionState } from './create-server.js';
-import { originGuard, parseAllowedOrigins } from './http-guards.js';
+import { getConnInfo } from '@hono/node-server/conninfo';
+import {
+  DEFAULT_MAX_BODY_BYTES,
+  DEFAULT_RATE_PER_MINUTE,
+  intFromEnv,
+  originGuard,
+  parseAllowedOrigins,
+  rateLimit,
+  sizeLimit
+} from './http-guards.js';
 
 // MCP_SERVER_PORT is the project's name for it; PORT is kept as a fallback for hosts that set it.
 const PORT = Number(process.env.MCP_SERVER_PORT ?? process.env.PORT ?? 4768);
@@ -193,6 +202,8 @@ app.route('/', resourceMetadataApp(MCP_SERVER_URL, ISSUER_URL));
 // Stage 10.2: always on (not behind AUTH_REQUIRED). A foreign Origin is refused
 // before any token check, so a browser page cannot even probe the server.
 app.use(MCP_PATH, originGuard(parseAllowedOrigins(process.env.ALLOWED_ORIGINS)));
+// Stage 10.3: a body over MAX_BODY_BYTES gets 413 before anything reads it.
+app.use(MCP_PATH, sizeLimit(intFromEnv(process.env.MAX_BODY_BYTES, DEFAULT_MAX_BODY_BYTES)));
 // Stage 9.3: with AUTH_REQUIRED=1 every /mcp request needs a valid Bearer token.
 // Off by default until the CLI client and dashboard can send one (9.4).
 if (process.env.AUTH_REQUIRED === '1') {
@@ -207,6 +218,18 @@ if (process.env.AUTH_REQUIRED === '1') {
   );
   // Stage 10.1: a valid token is not enough; each tool needs its own scope.
   app.use(MCP_PATH, scopeGuard(new URL('/.well-known/oauth-protected-resource/mcp', MCP_SERVER_URL).href));
+}
+// Stage 10.3: after the auth guards, so the caller is the token's `sub`; with auth
+// off it is the client address. RATE_LIMIT_PER_MINUTE=0 turns the limit off.
+const RATE_PER_MINUTE = intFromEnv(process.env.RATE_LIMIT_PER_MINUTE, DEFAULT_RATE_PER_MINUTE, true);
+if (RATE_PER_MINUTE > 0) {
+  app.use(
+    MCP_PATH,
+    rateLimit(RATE_PER_MINUTE, (c) => {
+      const auth = c.get('auth' as never) as { subject?: string } | undefined;
+      return auth?.subject ? `sub:${auth.subject}` : `ip:${getConnInfo(c).remote.address ?? 'unknown'}`;
+    })
+  );
 }
 app.all(MCP_PATH, (c) => (MODE === 'stateful' ? handleStateful(c) : handleStateless(c)));
 app.notFound((c) => c.body(null, 404));

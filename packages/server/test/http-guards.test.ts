@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { Hono } from 'hono';
-import { DEFAULT_ALLOWED_ORIGINS, originGuard, parseAllowedOrigins } from '../src/http-guards.js';
+import {
+  DEFAULT_ALLOWED_ORIGINS,
+  createRateLimiter,
+  intFromEnv,
+  originGuard,
+  parseAllowedOrigins,
+  rateLimit,
+  sizeLimit
+} from '../src/http-guards.js';
 
 describe('parseAllowedOrigins', () => {
   it('falls back to the dashboard origins when unset or empty', () => {
@@ -29,5 +37,72 @@ describe('originGuard', () => {
     expect((await call('http://evil.test')).status).toBe(403);
     expect((await call('http://ok.test.evil.test')).status).toBe(403);
     expect((await call('null')).status).toBe(403);
+  });
+});
+
+describe('intFromEnv', () => {
+  it('uses the default for unset, empty, negative, fractional or junk values', () => {
+    for (const v of [undefined, '', ' ', '-1', '1.5', 'abc']) expect(intFromEnv(v, 7)).toBe(7);
+  });
+  it('accepts a positive integer, and 0 only when allowed', () => {
+    expect(intFromEnv('50', 7)).toBe(50);
+    expect(intFromEnv('0', 7)).toBe(7);
+    expect(intFromEnv('0', 7, true)).toBe(0);
+  });
+});
+
+describe('createRateLimiter (token bucket)', () => {
+  it('allows a burst up to the capacity, then refuses', () => {
+    const limiter = createRateLimiter(3, () => 0);
+    expect(['a', 'a', 'a'].map((k) => limiter.take(k).ok)).toEqual([true, true, true]);
+    expect(limiter.take('a').ok).toBe(false);
+  });
+
+  it('keeps callers apart', () => {
+    const limiter = createRateLimiter(1, () => 0);
+    expect(limiter.take('alice').ok).toBe(true);
+    expect(limiter.take('alice').ok).toBe(false);
+    expect(limiter.take('bob').ok).toBe(true);
+  });
+
+  it('refills over time and reports Retry-After', () => {
+    let t = 0;
+    const limiter = createRateLimiter(60, () => t); // 1 token per second
+    for (let i = 0; i < 60; i++) limiter.take('a');
+    const refused = limiter.take('a');
+    expect(refused).toEqual({ ok: false, retryAfterSeconds: 1 });
+    t = 1_000;
+    expect(limiter.take('a').ok).toBe(true);
+    expect(limiter.take('a').ok).toBe(false);
+  });
+
+  it('never holds more than the capacity after a long idle', () => {
+    let t = 0;
+    const limiter = createRateLimiter(2, () => t);
+    limiter.take('a');
+    t = 10 * 60_000;
+    expect([limiter.take('a').ok, limiter.take('a').ok, limiter.take('a').ok]).toEqual([true, true, false]);
+  });
+});
+
+describe('rateLimit and sizeLimit middleware', () => {
+  it('answers 429 with Retry-After', async () => {
+    const app = new Hono();
+    app.use('*', rateLimit(1, () => 'k', () => 0));
+    app.get('/', (c) => c.text('ok'));
+    expect((await app.request('/')).status).toBe(200);
+    const res = await app.request('/');
+    expect(res.status).toBe(429);
+    expect(res.headers.get('retry-after')).toBe('60');
+  });
+
+  it('answers 413 over the cap and passes a body under it', async () => {
+    const app = new Hono();
+    app.use('*', sizeLimit(10));
+    app.post('/', async (c) => c.text(await c.req.text()));
+    const small = await app.request('/', { method: 'POST', body: '12345' });
+    expect(small.status).toBe(200);
+    const big = await app.request('/', { method: 'POST', body: 'x'.repeat(11) });
+    expect(big.status).toBe(413);
   });
 });
