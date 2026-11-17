@@ -26,6 +26,17 @@ Condensed technical facts established while building this project. The narrative
 - **Cancellation:** the handler's `extra.signal` aborts when the client sends `notifications/cancelled`. The SDK only flips the signal; the handler must pass it to whatever work it started (`fetch(url, { signal })`). The web dashboard's Cancel button goes through `/api/cancel` (a route handler) because Server Actions from the browser run one at a time.
 - **Client recovery:** a client whose session id the server no longer knows gets a 404 (`StreamableHTTPError`, `code: 404`). The web dashboard's `withClient()` drops the cached client, reconnects and retries once. A down server gives `TypeError: fetch failed` with no code, which is not retried.
 
+## How idle sessions are closed (stateful HTTP)
+
+Clients that vanish without sending `DELETE` would leak sessions, so `http.ts` sweeps idle ones.
+
+- **Setting:** `MCP_SESSION_TTL_MS`, default 1800000 (30 minutes), validated in `config.ts` (whole number, 1 or more).
+- **`lastSeen`:** each session stores a timestamp. It is set when the session is created and reset to `Date.now()` in `handleStateful` on every request that reaches an existing session (POST, GET and DELETE). A request refused with `404` (unknown id) or `403` (another caller's session) does not reset it.
+- **The sweeper:** one `setInterval` runs `sweepIdleSessions` every `min(60s, TTL)`. It is never reset. Each tick it computes `cutoff = now - TTL` and closes every session with `lastSeen < cutoff`, logging `session <id> idle for over …ms, closing`.
+- **Consequence:** a session closes between the TTL and the TTL plus one sweep interval after its last request, so up to a minute late with the default. A closed session's id then gets `404`, and the client must `initialize` again.
+- **Not checked:** whether a single `tools/call` that runs longer than the TTL can be swept while it is running. `lastSeen` is set when the request arrives, and I did not find progress notifications touching it.
+- **In memory only:** sessions live in the process, so a restart drops them all regardless of the TTL (Stage 11).
+
 ## Logging inside a stdio server
 
 Always `console.error`, never `console.log`. stdout is the JSON-RPC channel; anything else printed there corrupts the protocol stream.
