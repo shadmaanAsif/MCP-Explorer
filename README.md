@@ -80,28 +80,71 @@ Every stage (and every side exploration) gets its own git branch. The habit is: 
 
 The plan is grouped into **phases**. A phase is a goal you can demonstrate; a stage is one branch; a step (9.1, 9.2 …) is one commit or one small PR. Every phase below has the same five parts: **Goal**, **You can do this when it's done**, **Stages**, **Done when**, **Out of scope**. The rules for writing one are in [`constitution/planning.md`](constitution/planning.md).
 
+Overview: three phases in order.
+
 ```mermaid
 flowchart LR
-    subgraph P1["Phase 1 — Build the server (done)"]
-        direction LR
-        S1["1-4<br/>Tools, data,<br/>errors, sessions"] --> S5["5-6<br/>Resources, prompts,<br/>tests + CI"] --> S7["7-8<br/>Hono,<br/>code review"]
-    end
-    subgraph P2["Phase 2 — Production-ready (next)"]
-        direction LR
-        S9["9<br/>Authentication"] --> S10["10<br/>Authorization"] --> S11["11<br/>Persistence"] --> S12["12<br/>Observability"] --> S13["13<br/>Deploy"]
-    end
-    subgraph P3["Phase 3 — Build the client (planned)"]
-        direction LR
-        S14["14-18<br/>Client library, agent,<br/>client features, UI"]
-    end
-    P1 --> P2 --> P3
+    P1["Phase 1<br/>Build the server<br/>Stages 1-8 (done)"] --> P2["Phase 2<br/>Production-ready<br/>Stages 9-13 (in progress)"] --> P3["Phase 3<br/>Build the client<br/>Stages 14-18 (planned)"]
     classDef built fill:#d1fae5,stroke:#059669,color:#064e3b
     classDef current fill:#fef3c7,stroke:#d97706,color:#78350f
-    class S1,S5,S7 built
-    class S9 current
+    classDef planned fill:#e0e7ff,stroke:#6366f1,color:#312e81
+    class P1 built
+    class P2 current
+    class P3 planned
 ```
 
-Green = built and merged, amber = the next stage to plan and build. Everything else is still planned.
+Colours in every diagram below: green = built and merged, amber = built, PR open, blue = planned.
+
+**Phase 1: Build the server.** Stages are single branches, so there are no numbered steps.
+
+```mermaid
+flowchart LR
+    S1["Stage 1<br/>Basic server<br/>add tool"] --> S2["Stage 2<br/>Second tool<br/>divide + validation"] --> S3["Stage 3<br/>Real data source<br/>get_weather"] --> S4["Stage 4<br/>Errors, progress,<br/>stateful sessions"] --> S5["Stage 5<br/>Resources, prompts,<br/>completions"] --> S6["Stage 6<br/>Tests + CI"] --> S7["Stage 7<br/>Hono HTTP<br/>framework"] --> S8["Stage 8<br/>Code review server<br/>get_diff, read_file,<br/>run_checks"]
+    classDef built fill:#d1fae5,stroke:#059669,color:#064e3b
+    class S1,S2,S3,S4,S5,S6,S7,S8 built
+```
+
+**Phase 2: Make it production-ready.** Every step is one commit or one small PR.
+
+```mermaid
+flowchart TB
+    subgraph S9["Stage 9 - Authentication (merged, #18)"]
+        direction LR
+        A1["9.1<br/>Token issuer"] --> A2["9.2<br/>Protected-resource<br/>metadata"] --> A3["9.3<br/>Bearer<br/>middleware"] --> A4["9.4<br/>Client sends<br/>the token"] --> A5["9.5<br/>Tests and docs"]
+    end
+    subgraph S10["Stage 10 - Authorization and hardening (built, PR #20 open)"]
+        direction LR
+        B1["10.1<br/>Scopes<br/>per tool"] --> B2["10.2<br/>Origin check"] --> B3["10.3<br/>Rate and<br/>size limits"] --> B4["10.4<br/>Audit log"] --> B5["10.5<br/>Validated config<br/>and secrets"]
+    end
+    subgraph S11["Stage 11 - Persistence and scaling (planned)"]
+        direction LR
+        C1["11.1<br/>Session store<br/>interface"] --> C2["11.2<br/>Redis store"] --> C3["11.3<br/>Resumable streams<br/>Last-Event-ID"] --> C4["11.4<br/>Two instances<br/>behind a proxy"]
+    end
+    subgraph S12["Stage 12 - Observability (planned)"]
+        direction LR
+        D1["12.1<br/>Structured logs<br/>with session id"] --> D2["12.2<br/>Health and<br/>readiness"] --> D3["12.3<br/>Metrics"] --> D4["12.4<br/>OpenTelemetry<br/>traces"] --> D5["12.5<br/>Graceful<br/>shutdown"]
+    end
+    subgraph S13["Stage 13 - Containerize and deploy (planned)"]
+        direction LR
+        E1["13.1<br/>Dockerfile"] --> E2["13.2<br/>Env config"] --> E3["13.3<br/>Gateway, TLS,<br/>no SSE buffering"] --> E4["13.4<br/>CD pipeline"] --> E5["13.5<br/>Tool versioning<br/>policy"]
+    end
+    S9 --> S10 --> S11 --> S12 --> S13
+    classDef built fill:#d1fae5,stroke:#059669,color:#064e3b
+    classDef current fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef planned fill:#e0e7ff,stroke:#6366f1,color:#312e81
+    class A1,A2,A3,A4,A5 built
+    class B1,B2,B3,B4,B5 current
+    class C1,C2,C3,C4,D1,D2,D3,D4,D5,E1,E2,E3,E4,E5 planned
+```
+
+**Phase 3: Build the client.** Its steps are written when Phase 2 ends, so only the stages are shown.
+
+```mermaid
+flowchart LR
+    F14["Stage 14<br/>Client library<br/>reconnect, 401 flow"] --> F15["Stage 15<br/>LLM agent loop<br/>calls tools"] --> F16["Stage 16<br/>Client features<br/>roots, sampling,<br/>elicitation"] --> F17["Stage 17<br/>Several servers<br/>at once"] --> F18["Stage 18<br/>Web UI on the<br/>library"]
+    classDef planned fill:#e0e7ff,stroke:#6366f1,color:#312e81
+    class F14,F15,F16,F17,F18 planned
+```
 
 ### Phase 1 — Build the server *(done: Stages 1–8)*
 
@@ -147,7 +190,7 @@ Green = built and merged, amber = the next stage to plan and build. Everything e
 
 </details>
 
-### Phase 2 — Make it production-ready *(next: Stages 9–13)*
+### Phase 2 — Make it production-ready *(in progress: Stages 9–13)*
 
 **Goal:** what separates a demo server from one a team can run: you know who is calling and what they may do, state survives restarts, you can see what it is doing, and you can ship it.
 **You can do this when it's done:** start the whole stack with Docker Compose, get `401` without a token, call a tool with one, kill an instance and lose no session.
@@ -173,4 +216,4 @@ Side branches that may come up during Phase 2 (not stages): background checks (s
 
 Stages, in order, with steps to be written when Phase 2 ends: **14** a client library (reconnect, the `401` flow) · **15** an LLM agent loop that calls tools · **16** client features (roots, sampling, elicitation) · **17** several servers at once · **18** the web UI on top of the library.
 
-**Where we are:** Phase 1 is done: Stages 1–8 are merged (Stage 8 on #16, 145 tests), along with side explorations #2, #3 and #6–#9. Phase 2 is next; Stage 9 is planned in [docs/plans/stage-9-authentication.md](docs/plans/stage-9-authentication.md). Phases 2 and 3 are the plan, not a promise of exact detail.
+**Where we are:** Phase 1 is done: Stages 1–8 are merged (Stage 8 on #16, 145 tests), along with side explorations #2, #3 and #6–#9. Phase 2 is in progress: Stage 9 is merged (#18), Stage 10 is built and its PR (#20) is open, and Stage 11 is next. Phases 2 and 3 are the plan, not a promise of exact detail.
