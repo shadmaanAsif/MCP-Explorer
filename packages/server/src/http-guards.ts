@@ -40,15 +40,6 @@ export function originGuard(allowed: string[]): MiddlewareHandler {
 export const DEFAULT_MAX_BODY_BYTES = 1_048_576; // 1 MB
 export const DEFAULT_RATE_PER_MINUTE = 120;
 
-/** Reads a positive integer from an env value; anything else means the default. 0 is allowed where `allowZero`. */
-export function intFromEnv(value: string | undefined, fallback: number, allowZero = false): number {
-  const n = Number(value);
-  if (value === undefined || value.trim() === '' || !Number.isInteger(n) || n < 0 || (n === 0 && !allowZero)) {
-    return fallback;
-  }
-  return n;
-}
-
 type Bucket = { tokens: number; updated: number };
 
 /**

@@ -3,7 +3,6 @@ import { Hono } from 'hono';
 import {
   DEFAULT_ALLOWED_ORIGINS,
   createRateLimiter,
-  intFromEnv,
   originGuard,
   parseAllowedOrigins,
   rateLimit,
@@ -37,17 +36,6 @@ describe('originGuard', () => {
     expect((await call('http://evil.test')).status).toBe(403);
     expect((await call('http://ok.test.evil.test')).status).toBe(403);
     expect((await call('null')).status).toBe(403);
-  });
-});
-
-describe('intFromEnv', () => {
-  it('uses the default for unset, empty, negative, fractional or junk values', () => {
-    for (const v of [undefined, '', ' ', '-1', '1.5', 'abc']) expect(intFromEnv(v, 7)).toBe(7);
-  });
-  it('accepts a positive integer, and 0 only when allowed', () => {
-    expect(intFromEnv('50', 7)).toBe(50);
-    expect(intFromEnv('0', 7)).toBe(7);
-    expect(intFromEnv('0', 7, true)).toBe(0);
   });
 });
 

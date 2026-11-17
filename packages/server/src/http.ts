@@ -10,29 +10,23 @@ import { resourceMetadataApp } from './auth/resource-metadata.js';
 import { auditToStderr } from './audit.js';
 import { createServer, type SessionState } from './create-server.js';
 import { getConnInfo } from '@hono/node-server/conninfo';
-import {
-  DEFAULT_MAX_BODY_BYTES,
-  DEFAULT_RATE_PER_MINUTE,
-  intFromEnv,
-  originGuard,
-  parseAllowedOrigins,
-  rateLimit,
-  sizeLimit
-} from './http-guards.js';
+import { loadConfigOrExit, MCP_PATH } from './config.js';
+import { originGuard, rateLimit, sizeLimit } from './http-guards.js';
 
-// MCP_SERVER_PORT is the project's name for it; PORT is kept as a fallback for hosts that set it.
-const PORT = Number(process.env.MCP_SERVER_PORT ?? process.env.PORT ?? 4768);
-const MCP_PATH = '/mcp';
-const MCP_SERVER_URL = process.env.MCP_SERVER_URL || `http://localhost:${PORT}${MCP_PATH}`;
-const ISSUER_URL = process.env.ISSUER_URL || 'http://localhost:4769';
+// Stage 10.5: every setting is read and checked once, in config.ts. A bad value
+// stops the server here with a message that names the variable.
+const config = loadConfigOrExit();
+const PORT = config.port;
+const MCP_SERVER_URL = config.mcpServerUrl;
+const ISSUER_URL = config.issuerUrl;
 const SESSION_HEADER = 'mcp-session-id';
-const SESSION_TTL_MS = Number(process.env.MCP_SESSION_TTL_MS ?? 30 * 60 * 1000);
+const SESSION_TTL_MS = config.sessionTtlMs;
 const SWEEP_INTERVAL_MS = Math.min(60_000, SESSION_TTL_MS);
 
 // stateful (default): one McpServer + transport per client session, found again
 // on later requests through the Mcp-Session-Id header.
 // stateless: a fresh McpServer + transport per request, nothing remembered.
-const MODE = process.env.MCP_MODE === 'stateless' ? 'stateless' : 'stateful';
+const MODE = config.mode;
 
 // Hono hands us a web-standard Request and expects a Response back, so the
 // MCP side uses the SDK's web-standard transport (the Node transport is a
@@ -209,19 +203,19 @@ app.use('*', async (c, next) => {
 app.route('/', resourceMetadataApp(MCP_SERVER_URL, ISSUER_URL));
 // Stage 10.2: always on (not behind AUTH_REQUIRED). A foreign Origin is refused
 // before any token check, so a browser page cannot even probe the server.
-app.use(MCP_PATH, originGuard(parseAllowedOrigins(process.env.ALLOWED_ORIGINS)));
+app.use(MCP_PATH, originGuard(config.allowedOrigins));
 // Stage 10.3: a body over MAX_BODY_BYTES gets 413 before anything reads it.
-app.use(MCP_PATH, sizeLimit(intFromEnv(process.env.MAX_BODY_BYTES, DEFAULT_MAX_BODY_BYTES)));
+app.use(MCP_PATH, sizeLimit(config.maxBodyBytes));
 // Stage 9.3: with AUTH_REQUIRED=1 every /mcp request needs a valid Bearer token.
 // Off by default until the CLI client and dashboard can send one (9.4).
-if (process.env.AUTH_REQUIRED === '1') {
+if (config.authRequired) {
   app.use(
     MCP_PATH,
     bearerAuth({
       issuer: ISSUER_URL,
       audience: MCP_SERVER_URL,
       resourceMetadataUrl: new URL('/.well-known/oauth-protected-resource/mcp', MCP_SERVER_URL).href,
-      scope: process.env.AUTH_SCOPE || 'mcp:tools',
+      scope: config.authScope,
     }),
   );
   // Stage 10.1: a valid token is not enough; each tool needs its own scope.
@@ -229,7 +223,7 @@ if (process.env.AUTH_REQUIRED === '1') {
 }
 // Stage 10.3: after the auth guards, so the caller is the token's `sub`; with auth
 // off it is the client address. RATE_LIMIT_PER_MINUTE=0 turns the limit off.
-const RATE_PER_MINUTE = intFromEnv(process.env.RATE_LIMIT_PER_MINUTE, DEFAULT_RATE_PER_MINUTE, true);
+const RATE_PER_MINUTE = config.ratePerMinute;
 if (RATE_PER_MINUTE > 0) {
   app.use(
     MCP_PATH,
