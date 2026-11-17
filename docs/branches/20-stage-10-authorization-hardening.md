@@ -1,6 +1,6 @@
 # #20 — Stage 10: authorization and hardening (`20-stage-10-authorization-hardening`)
 
-**Status:** in progress. 10.1 to 10.4 built; 10.5 not started. Plan: [docs/plans/stage-10-authorization-hardening.md](../plans/stage-10-authorization-hardening.md).
+**Status:** in progress. all five steps built (10.1 to 10.5). Plan: [docs/plans/stage-10-authorization-hardening.md](../plans/stage-10-authorization-hardening.md).
 
 Stage 9 answers "who is calling?". Stage 10 answers "what may they do, and what did they do?".
 
@@ -12,7 +12,7 @@ Stage 9 answers "who is calling?". Stage 10 answers "what may they do, and what 
 | 10.2 | `Origin` check | Built |
 | 10.3 | Rate and size limits | Built |
 | 10.4 | Audit log | Built |
-| 10.5 | Validated config and secrets | Not started |
+| 10.5 | Validated config and secrets | Built |
 
 ## 10.1 Scopes per tool
 
@@ -73,7 +73,7 @@ pnpm --silent issuer token --sub alice --scope "mcp:tools weather:use"
 - **Who the caller is:** the token's `sub` when auth is on, so one caller can't starve another. With auth off it is the client address.
 - **Order:** Origin check, then size, then the token and scope guards, then the rate limit. The rate limit sits after auth so it can see the `sub`. A caller with no valid token gets `401` before it is counted.
 - **Per instance:** the buckets live in this server's memory. Two instances each keep their own count. Stage 11 revisits that.
-- **Bad values:** a non-number or negative setting falls back to the default.
+- **Bad values:** since 10.5 a bad setting stops the server at startup (see 10.5), where 10.3 first fell back to the default.
 
 **Proof:** unit tests for the bucket (burst, separate callers, refill, Retry-After, idle cap) and the two middlewares, plus 4 end-to-end tests: `413`, `429` and recovery after a second, the limit switched off, and one caller not starving another. With the size and rate lines removed, the `413` and `429` tests fail. 215 tests pass.
 
@@ -113,6 +113,48 @@ pnpm --silent issuer token --sub alice --scope "mcp:tools weather:use"
 - **No file or shipping:** it is stderr only. Sending it somewhere is Stage 12.
 
 **Proof:** 6 unit tests (`test/audit.test.ts`: allowed, error, unknown tool, listing, a review tool) and 2 end-to-end tests against the real server: one allowed and one denied line with the right fields and none of the argument values, and `sub: null` with auth off. With the wrapper and the denied-line write removed, 6 tests fail. 223 tests pass.
+
+## 10.5 Validated config
+
+**The problem:** the server read its settings with `process.env` in many places, and a bad value did the wrong thing quietly. `AUTH_REQUIRED=true` left the server open, because only `1` turned auth on. `MCP_SERVER_PORT=abc` became `NaN`.
+
+**What it is:** one file, [`src/config.ts`](../../packages/server/src/config.ts), reads every setting of the HTTP server with zod, applies defaults, and checks the lot once at startup. `http.ts` takes its values from the result. If anything is wrong, the server prints every problem and exits with code 1, with no stack trace:
+
+```
+Invalid configuration:
+  - MCP_SERVER_PORT: must be a whole number, 0 or more
+  - AUTH_REQUIRED: must be 0 or 1
+```
+
+| Variable | Rule | Default |
+|---|---|---|
+| `MCP_SERVER_PORT` (or `PORT`) | whole number, 1 to 65535 | 4768 |
+| `MCP_SERVER_URL`, `ISSUER_URL` | an `http(s)` URL | `http://localhost:<port>/mcp`, `http://localhost:4769` |
+| `MCP_MODE` | `stateful` or `stateless` | `stateful` |
+| `MCP_SESSION_TTL_MS` | whole number, 1 or more | 1800000 |
+| `AUTH_REQUIRED` | `0` or `1` | `0` |
+| `AUTH_SCOPE` | text | `mcp:tools` |
+| `ALLOWED_ORIGINS` | comma list of `http(s)` origins | the dashboard |
+| `MAX_BODY_BYTES` | whole number, 1 or more | 1048576 |
+| `RATE_LIMIT_PER_MINUTE` | whole number, 0 or more (`0` = off) | 120 |
+| `NODE_ENV` | any text | not set |
+
+An empty variable (`FOO=`) counts as not set.
+
+**Two rules across variables:**
+- **`AUTH_REQUIRED=1` needs `ISSUER_URL` set.** There is no silent fall back to `localhost` when auth is on.
+- **`NODE_ENV=production` needs `AUTH_REQUIRED=1`** (decision D7). A production server will not start open to everyone. Local use keeps auth off by default.
+
+**Secrets:** a message names the variable and what it expects, never its value. The private key is not in the environment, only the path to its file.
+
+**Changed behaviour:** 10.3 fell back to the default for a bad `MAX_BODY_BYTES` or `RATE_LIMIT_PER_MINUTE`. Now it stops the server. I removed `intFromEnv` and its unit tests.
+
+**Not covered:** settings read elsewhere are not validated here:
+- the issuer CLI's own variables (`ISSUER_PORT`, `ISSUER_KEY_FILE`, `TOKEN_AUDIENCE`, `TOKEN_TTL_SECONDS`)
+- the weather settings (`OPEN_METEO_URL` and the two timeouts)
+- the `REVIEW_*` settings
+
+**Proof:** `test/config.test.ts` has 9 unit tests (defaults, derived URL, `PORT` fallback, each bad variable named, ranges, the two cross rules, the value never appearing in a message) and 3 tests that start the real compiled server with a bad port, auth on without `ISSUER_URL`, and production with auth off. Each must exit 1 and print the variable. With the production rule removed, 2 tests failed, and I restored it. 233 tests pass.
 
 ## Testing in MCP clients
 
@@ -221,6 +263,14 @@ Then ask it to call `add` (works) and `run_checks` (refused with `403`). The sam
     pnpm start:http 2>&1 | grep '"type":"audit"'
     ```
     Run steps 4 and 5 again with that running. Expect an `allowed` line for a permitted call and a `denied` line with `"missing":["review:run"]` for the refused `run_checks`. Neither line should show the arguments.
-11. Remove the settings from steps 8 and 9, turn auth off again (`AUTH_REQUIRED=0`) and restart the server.
+11. Check the config guard. Start the server with a bad value and read the message:
+    ```bash
+    AUTH_REQUIRED=true pnpm start:http
+    ```
+    It should exit at once with `Invalid configuration:` and `AUTH_REQUIRED: must be 0 or 1`, and no server starts. Then try production with auth off. It must also refuse:
+    ```bash
+    NODE_ENV=production AUTH_REQUIRED=0 pnpm start:http
+    ```
+12. Remove the settings from steps 8 and 9, turn auth off again (`AUTH_REQUIRED=0`) and restart the server.
 
-Steps 4 to 10 are the same checks the tests make; I have not run these exact `curl` lines by hand. Steps for 10.5 are added as each is built.
+Steps 4 to 11 are the same checks the tests make; I have not run these exact `curl` lines by hand. Steps for 10.5 are added as each is built.

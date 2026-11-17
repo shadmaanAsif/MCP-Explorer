@@ -1,6 +1,6 @@
 # Plan: Stage 10, authorization and hardening
 
-**Phase 2, stage 2 of 5.** Branch: `20-stage-10-authorization-hardening` (number set when the branch is cut, see D6). Status: in progress (10.1 to 10.4 built).
+**Phase 2, stage 2 of 5.** Branch: `20-stage-10-authorization-hardening`. Status: built (10.1 to 10.5).
 
 ## Goal
 
@@ -26,7 +26,7 @@ Make two tokens, one with `weather:use` and one with `review:run`. The first can
 | D4 | Session belongs to its caller | In stateful mode a session remembers the `sub` that created it. A later request with that session id and a different `sub` gets `403`. | **built in 10.1** |
 | D5 | Where the audit log goes | One JSON line per tool call to stderr (stdout is reserved for stdio). Optional `AUDIT_LOG_FILE`. Argument **values are not logged**, only the argument names, because they can hold paths and secrets. | proposed |
 | D6 | Order with the `review.ts` split | Split first (branch 19, merged), so Stage 10 touches small files. Stage 10 is branch 20. | **decided, done** |
-| D7 | Auth on by default | Phase 2 ends with auth on. Proposal: in 10.5 the server refuses to start with `NODE_ENV=production` and `AUTH_REQUIRED` not `1`. The default stays off for local use. | proposed |
+| D7 | Auth on by default | Phase 2 ends with auth on. In 10.5 the server refuses to start with `NODE_ENV=production` and `AUTH_REQUIRED` not `1`. The default stays off for local use. | built |
 
 ## Steps
 
@@ -50,7 +50,7 @@ One JSON line per tool call: time, `sub`, session id, tool, `allowed` or `denied
 *Files:* `src/audit.ts` (new), `src/http.ts`, tests that read the lines back.
 *Done when:* a denied call and an allowed call each produce one correct line, and no test output contains an argument value.
 
-**10.5 Validated config and secrets.**
+**10.5 Validated config and secrets. (built)**
 One `src/config.ts` that reads every env var with zod, applies defaults and fails at startup with a message that names the bad variable. Secrets (the key file path is fine, key material is not) are never printed. D7 lives here.
 *Files:* `src/config.ts` (new), `src/http.ts`, `src/auth/*`, `test/config.test.ts`.
 *Done when:* a bad `MCP_SERVER_PORT` or a missing `ISSUER_URL` under `AUTH_REQUIRED=1` stops the server with a clear message, and the docs list every variable.
