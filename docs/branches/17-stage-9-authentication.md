@@ -7,6 +7,7 @@
 - [Phase planning](#phase-planning-commit-1)
 - [Steps at a glance](#steps-at-a-glance)
 - [Config: one `.env` per package](#config-one-env-per-package)
+- [How tokens and keys work](#how-tokens-and-keys-work)
 - [9.1 Token issuer](#91-token-issuer)
 - [9.2 Protected-resource metadata](#92-protected-resource-metadata)
 - [9.3 Bearer middleware](#93-bearer-middleware)
@@ -46,6 +47,52 @@ Steps come from [the plan](../plans/stage-9-authentication.md).
 - **Precedence:** shell variable, then flag, then file, then built-in default. No `.env` still works.
 - **Cost:** `MCP_SERVER_URL` is in all three files, so change it in each if the server's port changes.
 - **Checked:** server, issuer, client and dashboard all ran on ports 5767 to 5769 from changed per-package files.
+
+## How tokens and keys work
+
+**A token** is a string the issuer gives a client: `header.payload.signature`, three base64 parts. The payload holds the claims (`sub`, `scope`, `aud`, `iss`, `iat`, `exp`). It is encoded, not secret. The client sends it as `Authorization: Bearer <token>` on every request.
+
+**The key pair** is made once by the issuer and saved in `packages/server/.auth/issuer-key.json` (`0600`, git-ignored).
+- **Private key:** signs tokens. It stays in that file and in the issuer process. Whoever has it can sign a token with any `sub` and `scope`, so never share it.
+- **Public key:** checks signatures and cannot sign. It is published at the issuer's `/jwks.json`.
+
+**`/jwks.json`** is a list of public keys:
+
+| Field | Meaning |
+|---|---|
+| `kty`, `alg`, `use` | RSA, RS256, for signatures only |
+| `kid` | key id. The token's header names a `kid`, so the server picks the matching key. This is how rotation works. |
+| `n`, `e` | the two numbers of the RSA public key |
+
+There is no `d`, which would be the private part.
+
+**From nothing to a tool call:**
+1. `pnpm issuer serve` loads the key file, or creates the pair on the first run, and serves `/jwks.json`.
+2. `pnpm issuer token …` loads the same file, builds the payload, signs it with the private key, prints the token and exits. It doesn't contact the running issuer.
+3. You give the token to a client (`MCP_TOKEN`, or `headers` in `mcp.json`).
+4. The client sends it with each request to `/mcp`.
+5. The server fetches the public key once, caches it, and checks the signature, then `iss`, `aud` and `exp`. A failure is `401`.
+6. The tool runs. (Stage 10 adds scope, rate and audit checks after this.)
+
+**Why nothing is stored:** the signature is the proof. Changing one character of the payload breaks it, so the server needs no list of tokens. The cost is that a single token can't be revoked. It works until `exp`. Short `--ttl` values limit the risk.
+
+**Restarts:**
+- **Keys and tokens survive** an issuer or server restart, because the key file is reloaded and tokens are not stored.
+- **Tokens stop working** only if the key file is deleted or `ISSUER_KEY_FILE` changes. A new pair is then made and old tokens fail with `401`.
+- **Another machine** makes its own key pair, so tokens from yours fail there.
+- **Sessions and rate-limit counters** (Stage 10) are in memory and are lost on a server restart.
+
+**In an enterprise:** the issuer is a separate managed identity provider (Okta, Entra ID, Auth0, Keycloak). Its private key sits in a key store and is rotated, and users log in through OAuth with short-lived tokens and refresh tokens. The MCP server needs only `ISSUER_URL` and its audience.
+
+**Our code against a real provider:** the checks (signature, `iss`, `aud`, `exp`, RS256) are standard. Three things in `src/auth/middleware.ts` assume our issuer:
+
+| Part | Our code | A real provider |
+|---|---|---|
+| Key address | always `/jwks.json` | publishes its own `jwks_uri` in its metadata |
+| Scopes | reads the `scope` claim as a space-separated string | may use `scp` (Entra), or groups |
+| Issuer and audience | must equal `ISSUER_URL` and `MCP_SERVER_URL` | often differ (`api://app-id`, a tenant path) |
+
+I read these from our code and from what I know of the providers. I haven't tried a real provider. A candidate for 10.5: read `jwks_uri` from the metadata, make the scope claim configurable, and split the issuer and audience settings.
 
 ## 9.1 Token issuer
 
@@ -195,7 +242,7 @@ Run these from the repo root, in three terminal tabs. In each tab run `nvm use 2
 5. **CLI without a token:** `pnpm client`. Expect "The server needs a token and MCP_TOKEN is not set."
 6. **CLI with a token:**
    ```bash
-   export MCP_TOKEN=$(pnpm --silent issuer token --sub alice --scope "mcp:tools")
+   export MCP_TOKEN=$(pnpm --silent issuer token --sub alice --scope "mcp:tools weather:use")
    pnpm client
    ```
    Expect the list of tools. A wrong or expired token prints "The server refused the token".

@@ -579,4 +579,255 @@ describe('bearer auth end to end (Stage 9.3)', () => {
     });
     expect(noToken.status).toBe(401);
   });
+
+  describe('scopes and session owner (Stage 10.1)', () => {
+    const connect = async (token: string) => {
+      const client = new Client({ name: 'test-client', version: '0.0.0' });
+      await client.connect(
+        new StreamableHTTPClientTransport(new URL(server.url), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }),
+      );
+      return client;
+    };
+
+    it('a weather:use token can call add and is refused run_checks with 403', async () => {
+      const token = await createToken(keys, { issuer: issuerUrl, subject: 'alice', audience, scope: 'mcp:tools weather:use' });
+      const client = await connect(token);
+      const ok = await client.callTool({ name: 'add', arguments: { a: 1, b: 2 } });
+      expect(ok.isError).toBeFalsy();
+      await client.close();
+
+      // The client hides the status, so check the refusal with a raw request.
+      const init = await fetch(server.url, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, Authorization: `Bearer ${token}` },
+        body: JSON.stringify(initializeBody),
+      });
+      const denied = await fetch(server.url, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, Authorization: `Bearer ${token}`, 'Mcp-Session-Id': init.headers.get('mcp-session-id')! },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'run_checks', arguments: { checks: ['test'] } } }),
+      });
+      expect(denied.status).toBe(403);
+      expect(denied.headers.get('www-authenticate')).toContain('scope="review:run"');
+    });
+
+    it('a session id used with another caller\'s token gets 403', async () => {
+      const alice = await createToken(keys, { issuer: issuerUrl, subject: 'alice', audience, scope: 'mcp:tools' });
+      const bob = await createToken(keys, { issuer: issuerUrl, subject: 'bob', audience, scope: 'mcp:tools' });
+      const init = await fetch(server.url, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, Authorization: `Bearer ${alice}` },
+        body: JSON.stringify(initializeBody),
+      });
+      const sessionId = init.headers.get('mcp-session-id')!;
+      const call = (token: string) =>
+        fetch(server.url, {
+          method: 'POST',
+          headers: { ...JSON_HEADERS, Authorization: `Bearer ${token}`, 'Mcp-Session-Id': sessionId },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
+        });
+      expect((await call(alice)).status).toBe(200);
+      expect((await call(bob)).status).toBe(403);
+    });
+  });
+});
+
+describe('Origin check (Stage 10.2)', () => {
+  let server: HttpServer;
+  beforeAll(async () => {
+    server = await startHttpServer({ ALLOWED_ORIGINS: 'http://app.test, http://other.test/' });
+  });
+  afterAll(async () => {
+    await server.stop();
+  });
+
+  const post = (origin?: string) =>
+    fetch(server.url, {
+      method: 'POST',
+      headers: { ...JSON_HEADERS, ...(origin ? { Origin: origin } : {}) },
+      body: JSON.stringify(initializeBody)
+    });
+
+  it('refuses a foreign Origin with 403', async () => {
+    const res = await post('http://evil.test');
+    expect(res.status).toBe(403);
+    expect((await res.json()).error.message).toBe('Origin not allowed');
+  });
+
+  it('refuses the literal "null" origin of a sandboxed page', async () => {
+    expect((await post('null')).status).toBe(403);
+  });
+
+  it('allows listed origins, ignoring case and a trailing slash', async () => {
+    expect((await post('http://app.test')).status).toBe(200);
+    expect((await post('HTTP://OTHER.test')).status).toBe(200);
+  });
+
+  it('allows a request with no Origin (curl, the CLI, Cursor)', async () => {
+    expect((await post()).status).toBe(200);
+  });
+
+  it('refuses the origin before any token check', async () => {
+    const guarded = await startHttpServer({ AUTH_REQUIRED: '1', ISSUER_URL: 'http://127.0.0.1:1' });
+    try {
+      const res = await fetch(guarded.url, {
+        method: 'POST',
+        headers: { ...JSON_HEADERS, Origin: 'http://evil.test' },
+        body: JSON.stringify(initializeBody)
+      });
+      expect(res.status).toBe(403);
+    } finally {
+      await guarded.stop();
+    }
+  });
+});
+
+describe('size and rate limits (Stage 10.3)', () => {
+  const post = (url: string, body: unknown = initializeBody) =>
+    fetch(url, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body) });
+
+  it('refuses a body over MAX_BODY_BYTES with 413 and accepts one under it', async () => {
+    const server = await startHttpServer({ MAX_BODY_BYTES: '400' });
+    try {
+      expect((await post(server.url)).status).toBe(200);
+      const big = await post(server.url, { ...initializeBody, padding: 'x'.repeat(1000) });
+      expect(big.status).toBe(413);
+      expect((await big.json()).error.message).toContain('over 400 bytes');
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('answers 429 with Retry-After past the rate, and recovers after the window', async () => {
+    // 60 per minute: a burst of 60, then one more token every second.
+    const server = await startHttpServer({ RATE_LIMIT_PER_MINUTE: '60' });
+    try {
+      const ping = () => post(server.url, { jsonrpc: '2.0', id: 9, method: 'ping' });
+      let refused: Response | undefined;
+      for (let i = 0; i < 70 && !refused; i++) {
+        const res = await ping();
+        if (res.status === 429) refused = res;
+      }
+      expect(refused).toBeDefined();
+      expect(Number(refused!.headers.get('retry-after'))).toBeGreaterThanOrEqual(1);
+      await sleep(1_200);
+      expect((await ping()).status).not.toBe(429);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('with auth on, the limit is per token subject, so one caller cannot starve another', async () => {
+    const keys = await createKeys();
+    const app = issuerApp(keys);
+    const issuer = await new Promise<ReturnType<typeof serve>>((resolve) => {
+      const s = serve({ fetch: (r) => app.fetch(r), port: 0, hostname: '127.0.0.1' }, () => resolve(s));
+    });
+    const issuerUrl = `http://127.0.0.1:${(issuer as unknown as { address(): { port: number } }).address().port}`;
+    const server = await startHttpServer({
+      AUTH_REQUIRED: '1',
+      ISSUER_URL: issuerUrl,
+      MCP_SERVER_URL: '',
+      RATE_LIMIT_PER_MINUTE: '3'
+    });
+    try {
+      const audience = server.url.replace('127.0.0.1', 'localhost');
+      const alice = await createToken(keys, { issuer: issuerUrl, subject: 'alice', audience, scope: 'mcp:tools' });
+      const bob = await createToken(keys, { issuer: issuerUrl, subject: 'bob', audience, scope: 'mcp:tools' });
+      const call = (token: string) =>
+        fetch(server.url, {
+          method: 'POST',
+          headers: { ...JSON_HEADERS, Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' })
+        });
+      const statuses: number[] = [];
+      for (let i = 0; i < 5; i++) statuses.push((await call(alice)).status);
+      expect(statuses.slice(0, 3)).not.toContain(429);
+      expect(statuses.slice(3)).toEqual([429, 429]);
+      expect((await call(bob)).status).not.toBe(429);
+    } finally {
+      issuer.close();
+      await server.stop();
+    }
+  });
+
+  it('turns the rate limit off with RATE_LIMIT_PER_MINUTE=0', async () => {
+    const server = await startHttpServer({ RATE_LIMIT_PER_MINUTE: '0' });
+    try {
+      for (let i = 0; i < 80; i++) {
+        expect((await post(server.url, { jsonrpc: '2.0', id: i, method: 'ping' })).status).not.toBe(429);
+      }
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+describe('audit log (Stage 10.4)', () => {
+  const auditLines = (logs: string) =>
+    logs
+      .split('\n')
+      .filter((l) => l.startsWith('{"type":"audit"'))
+      .map((l) => JSON.parse(l));
+
+  it('writes one line per allowed call and one per denied call, never the arguments', async () => {
+    const keys = await createKeys();
+    const app = issuerApp(keys);
+    const issuer = await new Promise<ReturnType<typeof serve>>((resolve) => {
+      const s = serve({ fetch: (r) => app.fetch(r), port: 0, hostname: '127.0.0.1' }, () => resolve(s));
+    });
+    const issuerUrl = `http://127.0.0.1:${(issuer as unknown as { address(): { port: number } }).address().port}`;
+    const server = await startHttpServer({ ...weatherEnv(), AUTH_REQUIRED: '1', ISSUER_URL: issuerUrl, MCP_SERVER_URL: '' });
+    try {
+      const audience = server.url.replace('127.0.0.1', 'localhost');
+      const token = await createToken(keys, { issuer: issuerUrl, subject: 'alice', audience, scope: 'mcp:tools weather:use' });
+      const headers = { ...JSON_HEADERS, Authorization: `Bearer ${token}` };
+
+      const init = await fetch(server.url, { method: 'POST', headers, body: JSON.stringify(initializeBody) });
+      const sessionId = init.headers.get('mcp-session-id')!;
+      const call = (id: number, name: string, args: unknown) =>
+        fetch(server.url, {
+          method: 'POST',
+          headers: { ...headers, 'Mcp-Session-Id': sessionId },
+          body: JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } })
+        });
+
+      expect((await call(2, 'add', { a: 4242, b: 7 })).status).toBe(200);
+      expect((await call(3, 'run_checks', { checks: ['test'], root: '/secret/path-xyz' })).status).toBe(403);
+      await sleep(100);
+
+      const lines = auditLines(server.logs());
+      expect(lines).toHaveLength(2);
+      expect(lines[0]).toMatchObject({ sub: 'alice', session: sessionId, tool: 'add', decision: 'allowed', outcome: 'ok' });
+      expect(lines[1]).toMatchObject({
+        sub: 'alice',
+        session: sessionId,
+        tool: 'run_checks',
+        decision: 'denied',
+        missing: ['review:run']
+      });
+      expect(lines[1].outcome).toBeUndefined();
+      // The audit lines only: a tool's own debug line ("add called with a=…") is a separate log.
+      const auditText = JSON.stringify(lines);
+      expect(auditText).not.toContain('4242');
+      expect(auditText).not.toContain('path-xyz');
+      expect(server.logs()).not.toContain(token);
+    } finally {
+      issuer.close();
+      await server.stop();
+    }
+  });
+
+  it('records sub as null when auth is off', async () => {
+    const server = await startHttpServer({ ...weatherEnv(), MCP_MODE: 'stateless' });
+    try {
+      const { client } = await connect(server.url);
+      await client.callTool({ name: 'add', arguments: { a: 1, b: 2 } });
+      await client.close();
+      await sleep(100);
+      expect(auditLines(server.logs())).toMatchObject([{ sub: null, tool: 'add', decision: 'allowed', outcome: 'ok' }]);
+    } finally {
+      await server.stop();
+    }
+  });
 });

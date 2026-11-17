@@ -4,28 +4,34 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { Hono, type Context } from 'hono';
-import { bearerAuth } from './auth/middleware.js';
+import { bearerAuth, type AuthInfo } from './auth/middleware.js';
+import { scopeGuard } from './auth/scopes.js';
 import { resourceMetadataApp } from './auth/resource-metadata.js';
+import { auditToStderr } from './audit.js';
 import { createServer, type SessionState } from './create-server.js';
+import { getConnInfo } from '@hono/node-server/conninfo';
+import { loadConfigOrExit, MCP_PATH } from './config.js';
+import { originGuard, rateLimit, sizeLimit } from './http-guards.js';
 
-// MCP_SERVER_PORT is the project's name for it; PORT is kept as a fallback for hosts that set it.
-const PORT = Number(process.env.MCP_SERVER_PORT ?? process.env.PORT ?? 4768);
-const MCP_PATH = '/mcp';
-const MCP_SERVER_URL = process.env.MCP_SERVER_URL || `http://localhost:${PORT}${MCP_PATH}`;
-const ISSUER_URL = process.env.ISSUER_URL || 'http://localhost:4769';
+// Stage 10.5: every setting is read and checked once, in config.ts. A bad value
+// stops the server here with a message that names the variable.
+const config = loadConfigOrExit();
+const PORT = config.port;
+const MCP_SERVER_URL = config.mcpServerUrl;
+const ISSUER_URL = config.issuerUrl;
 const SESSION_HEADER = 'mcp-session-id';
-const SESSION_TTL_MS = Number(process.env.MCP_SESSION_TTL_MS ?? 30 * 60 * 1000);
+const SESSION_TTL_MS = config.sessionTtlMs;
 const SWEEP_INTERVAL_MS = Math.min(60_000, SESSION_TTL_MS);
 
 // stateful (default): one McpServer + transport per client session, found again
 // on later requests through the Mcp-Session-Id header.
 // stateless: a fresh McpServer + transport per request, nothing remembered.
-const MODE = process.env.MCP_MODE === 'stateless' ? 'stateless' : 'stateful';
+const MODE = config.mode;
 
 // Hono hands us a web-standard Request and expects a Response back, so the
 // MCP side uses the SDK's web-standard transport (the Node transport is a
 // wrapper around it).
-function jsonRpcError(c: Context, status: 400 | 404 | 500, code: number, message: string) {
+function jsonRpcError(c: Context, status: 400 | 403 | 404 | 500, code: number, message: string) {
   return c.json({ jsonrpc: '2.0', error: { code, message }, id: null }, status);
 }
 
@@ -82,10 +88,10 @@ async function handleStateless(c: Context) {
     return c.body(null, 405, { Allow: 'POST' });
   }
   const body = await c.req.json();
-  const server = createServer();
+  const server = createServer({}, auditToStderr);
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);
-  const response = await transport.handleRequest(c.req.raw, { parsedBody: body });
+  const response = await transport.handleRequest(c.req.raw, { parsedBody: body, authInfo: authInfoOf(c) });
   return afterBody(response, () => {
     void transport.close();
     void server.close();
@@ -99,13 +105,25 @@ type Session = {
   transport: WebStandardStreamableHTTPServerTransport;
   state: SessionState;
   lastSeen: number;
+  /** The `sub` that opened the session (only when auth is on). Stage 10.1. */
+  owner?: string;
+};
+
+// The caller bearerAuth verified, or undefined when auth is off.
+const callerOf = (c: Context) => (c as Context<{ Variables: { auth?: AuthInfo } }>).get('auth')?.subject;
+
+// What the tool handlers see as `extra.authInfo`, so the audit log knows who called.
+// The token itself is not passed on.
+const authInfoOf = (c: Context) => {
+  const auth = (c as Context<{ Variables: { auth?: AuthInfo } }>).get('auth');
+  return auth ? { token: '', clientId: auth.subject, scopes: auth.scopes } : undefined;
 };
 
 const sessions = new Map<string, Session>();
 
-async function createSession(): Promise<Session> {
+async function createSession(owner?: string): Promise<Session> {
   const state: SessionState = {};
-  const server = createServer(state);
+  const server = createServer(state, auditToStderr);
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: randomUUID,
     // The id only exists once the initialize request is handled, so the
@@ -115,7 +133,7 @@ async function createSession(): Promise<Session> {
       console.error(`[mcp-demo] session ${id} opened (${sessions.size} active)`);
     }
   });
-  const session: Session = { server, transport, state, lastSeen: Date.now() };
+  const session: Session = { server, transport, state, lastSeen: Date.now(), owner };
   transport.onclose = () => {
     const id = transport.sessionId;
     if (id && sessions.delete(id)) console.error(`[mcp-demo] session ${id} closed (${sessions.size} active)`);
@@ -134,11 +152,16 @@ async function handleStateful(c: Context) {
       // over with a new initialize.
       return jsonRpcError(c, 404, -32001, 'Session not found');
     }
+    // A session belongs to the caller that opened it: another valid token
+    // must not be able to ride on it.
+    if (session.owner !== undefined && session.owner !== callerOf(c)) {
+      return jsonRpcError(c, 403, -32000, 'This session belongs to another caller');
+    }
     session.lastSeen = Date.now();
     // POST (requests), GET (server → client stream), DELETE (end session)
     // are all handled by the session's own transport.
     const body = c.req.method === 'POST' ? await c.req.json() : undefined;
-    return session.transport.handleRequest(c.req.raw, { parsedBody: body });
+    return session.transport.handleRequest(c.req.raw, { parsedBody: body, authInfo: authInfoOf(c) });
   }
 
   // No session id: the only valid request is a POST that opens a session.
@@ -149,8 +172,8 @@ async function handleStateful(c: Context) {
   if (!isInitializeRequest(body)) {
     return jsonRpcError(c, 400, -32000, 'Missing Mcp-Session-Id: send an initialize request first');
   }
-  const session = await createSession();
-  return session.transport.handleRequest(c.req.raw, { parsedBody: body });
+  const session = await createSession(callerOf(c));
+  return session.transport.handleRequest(c.req.raw, { parsedBody: body, authInfo: authInfoOf(c) });
 }
 
 // Clients that vanish without sending DELETE would otherwise leak sessions.
@@ -178,17 +201,36 @@ app.use('*', async (c, next) => {
 
 // Public: a client reads this before it has a token (Stage 9.2).
 app.route('/', resourceMetadataApp(MCP_SERVER_URL, ISSUER_URL));
+// Stage 10.2: always on (not behind AUTH_REQUIRED). A foreign Origin is refused
+// before any token check, so a browser page cannot even probe the server.
+app.use(MCP_PATH, originGuard(config.allowedOrigins));
+// Stage 10.3: a body over MAX_BODY_BYTES gets 413 before anything reads it.
+app.use(MCP_PATH, sizeLimit(config.maxBodyBytes));
 // Stage 9.3: with AUTH_REQUIRED=1 every /mcp request needs a valid Bearer token.
 // Off by default until the CLI client and dashboard can send one (9.4).
-if (process.env.AUTH_REQUIRED === '1') {
+if (config.authRequired) {
   app.use(
     MCP_PATH,
     bearerAuth({
       issuer: ISSUER_URL,
       audience: MCP_SERVER_URL,
       resourceMetadataUrl: new URL('/.well-known/oauth-protected-resource/mcp', MCP_SERVER_URL).href,
-      scope: process.env.AUTH_SCOPE || 'mcp:tools',
+      scope: config.authScope,
     }),
+  );
+  // Stage 10.1: a valid token is not enough; each tool needs its own scope.
+  app.use(MCP_PATH, scopeGuard(new URL('/.well-known/oauth-protected-resource/mcp', MCP_SERVER_URL).href, auditToStderr));
+}
+// Stage 10.3: after the auth guards, so the caller is the token's `sub`; with auth
+// off it is the client address. RATE_LIMIT_PER_MINUTE=0 turns the limit off.
+const RATE_PER_MINUTE = config.ratePerMinute;
+if (RATE_PER_MINUTE > 0) {
+  app.use(
+    MCP_PATH,
+    rateLimit(RATE_PER_MINUTE, (c) => {
+      const auth = c.get('auth' as never) as { subject?: string } | undefined;
+      return auth?.subject ? `sub:${auth.subject}` : `ip:${getConnInfo(c).remote.address ?? 'unknown'}`;
+    })
   );
 }
 app.all(MCP_PATH, (c) => (MODE === 'stateful' ? handleStateful(c) : handleStateless(c)));
