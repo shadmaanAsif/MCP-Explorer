@@ -81,7 +81,7 @@ First, a throwaway test that builds a second transport, sets the session id, rep
 *Files:* `src/session-store.ts` (new), `src/http.ts`, `test/session-store.test.ts` (new).
 *Done when:* behaviour is unchanged (all existing tests pass; 242 with the new ones), the store has contract tests, and the D1 result is written in this plan.
 
-**11.2 Redis store.**
+**11.2 Redis store. (written; real-Redis tests not run)**
 A Redis implementation of the same interface, with key expiry (D4). New settings `SESSION_STORE`, `REDIS_URL` in `config.ts`, with the usual startup validation (`redis` needs `REDIS_URL`; the message never prints the URL, which can hold a password). On a miss in the local map, `handleStateful` asks the store and, per D1, rebuilds. After each request that may change `state`, write it back to the store (see "Gap found while planning").
 *Files:* `src/session-store-redis.ts` (new), `src/config.ts`, `src/http.ts`, `package.json` (`ioredis`), tests, `.env.example`.
 *Done when:* the same contract tests pass against Redis, and a test restarts the server process and the session id still works with its `home` intact.
@@ -194,7 +194,7 @@ Planned Redis operations (unverified until 11.2): `SET key json PX <ttl>` to cre
 
 | Dependency | Needed for | Status |
 |---|---|---|
-| `ioredis` | Redis client (D3) | not installed; check current docs and the Node 22/24 fit at 11.2 |
+| `ioredis` | Redis client (D3) | installed in 11.2 at 6.0.0; explained in the branch doc's "New packages" table |
 | Redis server | the store | not installed here; run it in Docker for tests and 11.4 |
 | Docker | 11.4 and CI's Redis service | `docker` is installed locally; I have not run it |
 | nginx or Caddy | the proxy in 11.4 | to be chosen; SSE buffering off is the only hard requirement |
