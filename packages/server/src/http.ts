@@ -12,7 +12,10 @@ import { createServer, type SessionState } from './create-server.js';
 import { getConnInfo } from '@hono/node-server/conninfo';
 import { loadConfigOrExit, MCP_PATH } from './config.js';
 import { originGuard, rateLimit, sizeLimit } from './http-guards.js';
-import { MemorySessionStore } from './session-store.js';
+import { Redis } from 'ioredis';
+import { MemorySessionStore, StoreUnavailableError, type SessionRecord, type SessionStore } from './session-store.js';
+import { RedisSessionStore } from './session-store-redis.js';
+import { replayInitialize } from './session-rebuild.js';
 
 // Stage 10.5: every setting is read and checked once, in config.ts. A bad value
 // stops the server here with a message that names the variable.
@@ -39,17 +42,17 @@ function jsonRpcError(c: Context, status: 400 | 403 | 404 | 500, code: number, m
 // Runs `done` once the response body has been fully sent or the client went
 // away. Replaces `res.on('close')` from the node:http version: with a
 // web-standard Response there is no socket to listen on, only the stream.
-function afterBody(response: Response, done: () => void): Response {
+function afterBody(response: Response, done: () => void | Promise<void>): Response {
   if (!response.body) {
     done();
     return response;
   }
   const reader = response.body.getReader();
   let finished = false;
-  const finish = () => {
+  const finish = async () => {
     if (!finished) {
       finished = true;
-      done();
+      await done();
     }
   };
   const body = new ReadableStream<Uint8Array>({
@@ -57,21 +60,23 @@ function afterBody(response: Response, done: () => void): Response {
       try {
         const { done: end, value } = await reader.read();
         if (end) {
+          // Wait for `done` first: the client only sees the end of the answer
+          // after, for example, the changed state has reached the store.
+          await finish();
           controller.close();
-          finish();
         } else {
           controller.enqueue(value);
         }
       } catch (error) {
         controller.error(error);
-        finish();
+        void finish();
       }
     },
     async cancel(reason) {
       try {
         await reader.cancel(reason);
       } finally {
-        finish();
+        void finish();
       }
     }
   });
@@ -102,13 +107,44 @@ async function handleStateless(c: Context) {
 // ---- stateful -----------------------------------------------------------
 
 // Live objects only. The data (owner, state, last seen) is in the SessionStore.
+// `state` is the object the tools change; `savedState` is its JSON as last
+// written to the store, so we only write when it changed.
 type Session = {
   server: McpServer;
   transport: WebStandardStreamableHTTPServerTransport;
+  state: SessionState;
+  savedState: string;
 };
 
-// Stage 11.1: the data half of every session. In memory for now; 11.2 adds Redis.
-const store = new MemorySessionStore();
+// Stage 11: the data half of every session. Memory by default (one process, as
+// before); SESSION_STORE=redis shares it between instances and across restarts.
+let redisClient: Redis | undefined;
+async function makeStore(): Promise<SessionStore> {
+  if (config.sessionStore !== 'redis') return new MemorySessionStore();
+  // Fail fast on a command when Redis is down, so a request gets a 503 instead
+  // of waiting in a queue. Error messages are not printed: they can hold the URL.
+  const redis = new Redis(config.redisUrl!, { lazyConnect: true, maxRetriesPerRequest: 1, enableOfflineQueue: false });
+  let lastWarn = 0;
+  redis.on('error', () => {
+    if (Date.now() - lastWarn > 10_000) {
+      lastWarn = Date.now();
+      console.error('[mcp-demo] session store (Redis) connection problem');
+    }
+  });
+  try {
+    await redis.connect();
+    await redis.ping();
+  } catch {
+    console.error('Cannot reach Redis (SESSION_STORE=redis). Check REDIS_URL and that Redis is running.');
+    process.exit(1);
+  }
+  redisClient = redis;
+  return new RedisSessionStore(redis, SESSION_TTL_MS);
+}
+const store: SessionStore = await makeStore();
+// On shutdown the live objects close, but the records stay: that is what lets
+// another instance (or this one after a restart) take the sessions over.
+let shuttingDown = false;
 
 // The caller bearerAuth verified, or undefined when auth is off.
 const callerOf = (c: Context) => (c as Context<{ Variables: { auth?: AuthInfo } }>).get('auth')?.subject;
@@ -122,25 +158,35 @@ const authInfoOf = (c: Context) => {
 
 const sessions = new Map<string, Session>();
 
-async function createSession(owner: string | undefined, initializeParams: unknown): Promise<Session> {
-  const state: SessionState = {};
+async function buildSession(opts: {
+  owner?: string;
+  initializeParams: unknown;
+  /** Set when rebuilding from the store: same id, same state, no new record. */
+  restore?: SessionRecord;
+}): Promise<Session> {
+  const { restore } = opts;
+  const state: SessionState = restore ? structuredClone(restore.state) : {};
   const server = createServer(state, auditToStderr);
   const transport = new WebStandardStreamableHTTPServerTransport({
-    sessionIdGenerator: randomUUID,
+    sessionIdGenerator: restore ? () => restore.id : randomUUID,
     // The id only exists once the initialize request is handled, so the
     // session is registered here, not before handleRequest.
     onsessioninitialized: async (id) => {
+      if (restore) return; // the record exists already; rebuildSession registers the session
       const now = Date.now();
-      await store.set({ id, owner, state, initializeParams, createdAt: now, lastSeen: now });
+      await store.set({ id, owner: opts.owner, state, initializeParams: opts.initializeParams, createdAt: now, lastSeen: now });
       sessions.set(id, session);
       console.error(`[mcp-demo] session ${id} opened (${sessions.size} active)`);
     }
   });
-  const session: Session = { server, transport };
+  const session: Session = { server, transport, state, savedState: JSON.stringify(state) };
   transport.onclose = () => {
     const id = transport.sessionId;
-    if (id && sessions.delete(id)) {
-      void store.delete(id);
+    // Only the session that is registered under this id may remove it, so a
+    // stale closed object cannot delete a rebuilt one's entry.
+    if (id && sessions.get(id) === session) {
+      sessions.delete(id);
+      if (!shuttingDown) store.delete(id).catch(() => {});
       console.error(`[mcp-demo] session ${id} closed (${sessions.size} active)`);
     }
   };
@@ -148,27 +194,77 @@ async function createSession(owner: string | undefined, initializeParams: unknow
   return session;
 }
 
+const createSession = (owner: string | undefined, initializeParams: unknown) => buildSession({ owner, initializeParams });
+
+// A store hit with no live session here: another instance made it, or this one
+// restarted. Build new live objects from the record. Concurrent requests for the
+// same id share one rebuild.
+const rebuilding = new Map<string, Promise<Session>>();
+function rebuildSession(record: SessionRecord): Promise<Session> {
+  let pending = rebuilding.get(record.id);
+  if (!pending) {
+    pending = (async () => {
+      const session = await buildSession({ owner: record.owner, initializeParams: record.initializeParams, restore: record });
+      try {
+        await replayInitialize(session.transport, record.id, record.initializeParams);
+      } catch (error) {
+        void session.transport.close();
+        throw error;
+      }
+      sessions.set(record.id, session);
+      console.error(`[mcp-demo] session ${record.id} rebuilt from the store (${sessions.size} active)`);
+      return session;
+    })().finally(() => rebuilding.delete(record.id));
+    rebuilding.set(record.id, pending);
+  }
+  return pending;
+}
+
+// Tools change `state` (set_home_location). Redis holds a copy, so a change has
+// to be written back or another instance would restore the old value.
+async function persistState(id: string, session: Session) {
+  const json = JSON.stringify(session.state);
+  if (json === session.savedState) return;
+  try {
+    const record = await store.get(id);
+    if (!record) return;
+    await store.set({ ...record, state: session.state });
+    session.savedState = json;
+  } catch (error) {
+    console.error(`[mcp-demo] could not save state for session ${id}:`, error instanceof Error ? error.message : error);
+  }
+}
+
 async function handleStateful(c: Context) {
   const sessionId = c.req.header(SESSION_HEADER);
 
   if (sessionId) {
-    const session = sessions.get(sessionId);
-    const record = session ? await store.get(sessionId) : undefined;
-    if (!session || !record) {
+    let session = sessions.get(sessionId);
+    const record = await store.get(sessionId);
+    if (!record) {
+      // The record expired or never existed. A live object held for it is stale.
+      if (session) void session.transport.close();
       // Spec: an unknown/expired id is 404, which tells the client to start
       // over with a new initialize.
       return jsonRpcError(c, 404, -32001, 'Session not found');
     }
     // A session belongs to the caller that opened it: another valid token
-    // must not be able to ride on it.
+    // must not be able to ride on it. Checked before any rebuild.
     if (record.owner !== undefined && record.owner !== callerOf(c)) {
       return jsonRpcError(c, 403, -32000, 'This session belongs to another caller');
+    }
+    if (!session) {
+      if (record.initializeParams === undefined) return jsonRpcError(c, 404, -32001, 'Session not found');
+      session = await rebuildSession(record);
     }
     await store.touch(sessionId);
     // POST (requests), GET (server → client stream), DELETE (end session)
     // are all handled by the session's own transport.
     const body = c.req.method === 'POST' ? await c.req.json() : undefined;
-    return session.transport.handleRequest(c.req.raw, { parsedBody: body, authInfo: authInfoOf(c) });
+    const response = await session.transport.handleRequest(c.req.raw, { parsedBody: body, authInfo: authInfoOf(c) });
+    // After a POST finishes, save any state a tool changed.
+    const live = session;
+    return c.req.method === 'POST' ? afterBody(response, () => persistState(sessionId, live)) : response;
   }
 
   // No session id: the only valid request is a POST that opens a session.
@@ -188,7 +284,8 @@ async function sweepIdleSessions() {
   const cutoff = Date.now() - SESSION_TTL_MS;
   for (const [id, session] of sessions) {
     const record = await store.get(id);
-    if (record && record.lastSeen < cutoff) {
+    // No record: it expired in the store (Redis key expiry), so close the live object.
+    if (!record || record.lastSeen < cutoff) {
       console.error(`[mcp-demo] session ${id} idle for over ${SESSION_TTL_MS}ms, closing`);
       void session.transport.close();
     }
@@ -244,6 +341,11 @@ if (RATE_PER_MINUTE > 0) {
 app.all(MCP_PATH, (c) => (MODE === 'stateful' ? handleStateful(c) : handleStateless(c)));
 app.notFound((c) => c.body(null, 404));
 app.onError((error, c) => {
+  if (error instanceof StoreUnavailableError) {
+    return c.json({ jsonrpc: '2.0', error: { code: -32603, message: 'Session store unavailable, retry shortly' }, id: null }, 503, {
+      'Retry-After': '5'
+    });
+  }
   console.error('[mcp-demo] error handling request:', error);
   return jsonRpcError(c, 500, -32603, 'Internal server error');
 });
@@ -272,9 +374,11 @@ if (MODE === 'stateful') {
 }
 
 async function shutdown() {
+  shuttingDown = true;
   if (sweeper) clearInterval(sweeper);
   httpServer.close();
   await Promise.all([...sessions.values()].map((s) => s.transport.close()));
+  await redisClient?.quit().catch(() => {});
   process.exit(0);
 }
 process.on('SIGINT', shutdown);

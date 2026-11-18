@@ -42,3 +42,12 @@ export class MemorySessionStore implements SessionStore {
     this.records.delete(id);
   }
 }
+
+// The store could not be reached (Redis down). http.ts turns this into a 503
+// with Retry-After, so a store outage does not look like a server bug.
+export class StoreUnavailableError extends Error {
+  constructor() {
+    super('The session store is unavailable');
+    this.name = 'StoreUnavailableError';
+  }
+}

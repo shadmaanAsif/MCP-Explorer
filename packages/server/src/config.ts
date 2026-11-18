@@ -45,6 +45,11 @@ const schema = z
       .optional(),
     MAX_BODY_BYTES: whole.refine((n) => n >= 1, 'must be 1 or more').default(DEFAULT_MAX_BODY_BYTES),
     RATE_LIMIT_PER_MINUTE: whole.default(DEFAULT_RATE_PER_MINUTE),
+    SESSION_STORE: z.enum(['memory', 'redis'], { error: 'must be memory or redis' }).default('memory'),
+    REDIS_URL: z
+      .string()
+      .refine((v) => URL.canParse(v) && /^rediss?:$/.test(new URL(v).protocol), 'must be a redis:// or rediss:// URL')
+      .optional(),
     NODE_ENV: z.string().optional()
   })
   .superRefine((env, ctx) => {
@@ -53,6 +58,13 @@ const schema = z
         code: 'custom',
         path: ['ISSUER_URL'],
         message: 'is required when AUTH_REQUIRED=1 (the address of the token issuer)'
+      });
+    }
+    if (env.SESSION_STORE === 'redis' && !env.REDIS_URL) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['REDIS_URL'],
+        message: 'is required when SESSION_STORE=redis'
       });
     }
     if (env.NODE_ENV === 'production' && env.AUTH_REQUIRED !== '1') {
@@ -75,6 +87,9 @@ export type Config = {
   allowedOrigins: string[];
   maxBodyBytes: number;
   ratePerMinute: number;
+  sessionStore: 'memory' | 'redis';
+  /** Never print this: it can contain a password. */
+  redisUrl?: string;
 };
 
 export const MCP_PATH = '/mcp';
@@ -106,7 +121,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     authScope: v.AUTH_SCOPE,
     allowedOrigins: parseAllowedOrigins(v.ALLOWED_ORIGINS),
     maxBodyBytes: v.MAX_BODY_BYTES,
-    ratePerMinute: v.RATE_LIMIT_PER_MINUTE
+    ratePerMinute: v.RATE_LIMIT_PER_MINUTE,
+    sessionStore: v.SESSION_STORE,
+    redisUrl: v.REDIS_URL
   };
 }
 

@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { createServer } from '../src/create-server.js';
+import { replayInitialize } from '../src/session-rebuild.js';
 
 const URL_ = 'http://localhost/mcp';
 const HEADERS = { 'content-type': 'application/json', accept: 'application/json, text/event-stream' };
@@ -78,6 +79,24 @@ describe('session rebuild (Stage 11.1 spike)', () => {
     await post(b.transport, INITIALIZED, { 'mcp-session-id': id, 'mcp-protocol-version': '2025-06-18' });
     const res = await post(b.transport, CALL_ADD, { 'mcp-session-id': randomUUID(), 'mcp-protocol-version': '2025-06-18' });
     expect(res.status).toBe(404);
+    await b.transport.close();
+  });
+
+  it('replayInitialize (used by http.ts) rebuilds a session from the stored id and initialize params', async () => {
+    const id = randomUUID();
+    const b = await newInstance(() => id);
+    await replayInitialize(b.transport, id, INIT.params);
+    expect(b.transport.sessionId).toBe(id);
+    const res = await post(b.transport, CALL_ADD, { 'mcp-session-id': id, 'mcp-protocol-version': '2025-06-18' });
+    expect(res.status).toBe(200);
+    expect((await messageOf(res)).result.content[0].text).toBe('5');
+    await b.transport.close();
+  });
+
+  it('replayInitialize fails loudly when the initialize params are unusable', async () => {
+    const id = randomUUID();
+    const b = await newInstance(() => id);
+    await expect(replayInitialize(b.transport, id, { nonsense: true })).rejects.toThrow('could not replay');
     await b.transport.close();
   });
 });
