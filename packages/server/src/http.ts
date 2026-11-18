@@ -12,6 +12,7 @@ import { createServer, type SessionState } from './create-server.js';
 import { getConnInfo } from '@hono/node-server/conninfo';
 import { loadConfigOrExit, MCP_PATH } from './config.js';
 import { originGuard, rateLimit, sizeLimit } from './http-guards.js';
+import { MemorySessionStore } from './session-store.js';
 
 // Stage 10.5: every setting is read and checked once, in config.ts. A bad value
 // stops the server here with a message that names the variable.
@@ -100,14 +101,14 @@ async function handleStateless(c: Context) {
 
 // ---- stateful -----------------------------------------------------------
 
+// Live objects only. The data (owner, state, last seen) is in the SessionStore.
 type Session = {
   server: McpServer;
   transport: WebStandardStreamableHTTPServerTransport;
-  state: SessionState;
-  lastSeen: number;
-  /** The `sub` that opened the session (only when auth is on). Stage 10.1. */
-  owner?: string;
 };
+
+// Stage 11.1: the data half of every session. In memory for now; 11.2 adds Redis.
+const store = new MemorySessionStore();
 
 // The caller bearerAuth verified, or undefined when auth is off.
 const callerOf = (c: Context) => (c as Context<{ Variables: { auth?: AuthInfo } }>).get('auth')?.subject;
@@ -121,22 +122,27 @@ const authInfoOf = (c: Context) => {
 
 const sessions = new Map<string, Session>();
 
-async function createSession(owner?: string): Promise<Session> {
+async function createSession(owner: string | undefined, initializeParams: unknown): Promise<Session> {
   const state: SessionState = {};
   const server = createServer(state, auditToStderr);
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: randomUUID,
     // The id only exists once the initialize request is handled, so the
     // session is registered here, not before handleRequest.
-    onsessioninitialized: (id) => {
+    onsessioninitialized: async (id) => {
+      const now = Date.now();
+      await store.set({ id, owner, state, initializeParams, createdAt: now, lastSeen: now });
       sessions.set(id, session);
       console.error(`[mcp-demo] session ${id} opened (${sessions.size} active)`);
     }
   });
-  const session: Session = { server, transport, state, lastSeen: Date.now(), owner };
+  const session: Session = { server, transport };
   transport.onclose = () => {
     const id = transport.sessionId;
-    if (id && sessions.delete(id)) console.error(`[mcp-demo] session ${id} closed (${sessions.size} active)`);
+    if (id && sessions.delete(id)) {
+      void store.delete(id);
+      console.error(`[mcp-demo] session ${id} closed (${sessions.size} active)`);
+    }
   };
   await server.connect(transport);
   return session;
@@ -147,17 +153,18 @@ async function handleStateful(c: Context) {
 
   if (sessionId) {
     const session = sessions.get(sessionId);
-    if (!session) {
+    const record = session ? await store.get(sessionId) : undefined;
+    if (!session || !record) {
       // Spec: an unknown/expired id is 404, which tells the client to start
       // over with a new initialize.
       return jsonRpcError(c, 404, -32001, 'Session not found');
     }
     // A session belongs to the caller that opened it: another valid token
     // must not be able to ride on it.
-    if (session.owner !== undefined && session.owner !== callerOf(c)) {
+    if (record.owner !== undefined && record.owner !== callerOf(c)) {
       return jsonRpcError(c, 403, -32000, 'This session belongs to another caller');
     }
-    session.lastSeen = Date.now();
+    await store.touch(sessionId);
     // POST (requests), GET (server → client stream), DELETE (end session)
     // are all handled by the session's own transport.
     const body = c.req.method === 'POST' ? await c.req.json() : undefined;
@@ -172,15 +179,16 @@ async function handleStateful(c: Context) {
   if (!isInitializeRequest(body)) {
     return jsonRpcError(c, 400, -32000, 'Missing Mcp-Session-Id: send an initialize request first');
   }
-  const session = await createSession(callerOf(c));
+  const session = await createSession(callerOf(c), (body as { params?: unknown }).params);
   return session.transport.handleRequest(c.req.raw, { parsedBody: body, authInfo: authInfoOf(c) });
 }
 
 // Clients that vanish without sending DELETE would otherwise leak sessions.
-function sweepIdleSessions() {
+async function sweepIdleSessions() {
   const cutoff = Date.now() - SESSION_TTL_MS;
   for (const [id, session] of sessions) {
-    if (session.lastSeen < cutoff) {
+    const record = await store.get(id);
+    if (record && record.lastSeen < cutoff) {
       console.error(`[mcp-demo] session ${id} idle for over ${SESSION_TTL_MS}ms, closing`);
       void session.transport.close();
     }
@@ -257,7 +265,9 @@ const httpServer = serve({ fetch: app.fetch, port: PORT }, () => {
 
 let sweeper: NodeJS.Timeout | undefined;
 if (MODE === 'stateful') {
-  sweeper = setInterval(sweepIdleSessions, SWEEP_INTERVAL_MS);
+  sweeper = setInterval(() => {
+    sweepIdleSessions().catch((err) => console.error('[mcp-demo] idle sweep failed:', err));
+  }, SWEEP_INTERVAL_MS);
   sweeper.unref();
 }
 
