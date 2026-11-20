@@ -15,6 +15,12 @@ import { originGuard, rateLimit, sizeLimit } from './http-guards.js';
 import { Redis } from 'ioredis';
 import { MemorySessionStore, StoreUnavailableError, type SessionRecord, type SessionStore } from './session-store.js';
 import { RedisSessionStore } from './session-store-redis.js';
+import {
+  MemoryEventBackend,
+  RedisEventBackend,
+  ScopedEventStore,
+  type EventBackend
+} from './event-store.js';
 import { replayInitialize } from './session-rebuild.js';
 
 // Stage 10.5: every setting is read and checked once, in config.ts. A bad value
@@ -142,6 +148,15 @@ async function makeStore(): Promise<SessionStore> {
   return new RedisSessionStore(redis, SESSION_TTL_MS);
 }
 const store: SessionStore = await makeStore();
+
+// Stage 11.3: the events behind resumable streams. Off by default, because it
+// makes the server send priming events that older behaviour never had. They
+// live in Redis when sessions do, so any instance can replay a stream.
+const eventBackend: EventBackend | undefined = !config.resumableStreams
+  ? undefined
+  : redisClient
+    ? new RedisEventBackend(redisClient, { maxEvents: config.eventMaxPerStream, ttlMs: config.eventTtlMs })
+    : new MemoryEventBackend({ maxEvents: config.eventMaxPerStream, ttlMs: config.eventTtlMs });
 // On shutdown the live objects close, but the records stay: that is what lets
 // another instance (or this one after a restart) take the sessions over.
 let shuttingDown = false;
@@ -167,8 +182,18 @@ async function buildSession(opts: {
   const { restore } = opts;
   const state: SessionState = restore ? structuredClone(restore.state) : {};
   const server = createServer(state, auditToStderr);
+  // The event store needs this session's id, which exists only after the
+  // transport has handled initialize, so it reads it from the transport later.
+  let transportRef: WebStandardStreamableHTTPServerTransport | undefined;
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: restore ? () => restore.id : randomUUID,
+    eventStore: eventBackend
+      ? new ScopedEventStore(
+          eventBackend,
+          () => transportRef?.sessionId,
+          config.eventDebug ? (line) => console.error(`[mcp-demo] ${line}`) : undefined
+        )
+      : undefined,
     // The id only exists once the initialize request is handled, so the
     // session is registered here, not before handleRequest.
     onsessioninitialized: async (id) => {
@@ -179,6 +204,7 @@ async function buildSession(opts: {
       console.error(`[mcp-demo] session ${id} opened (${sessions.size} active)`);
     }
   });
+  transportRef = transport;
   const session: Session = { server, transport, state, savedState: JSON.stringify(state) };
   transport.onclose = () => {
     const id = transport.sessionId;

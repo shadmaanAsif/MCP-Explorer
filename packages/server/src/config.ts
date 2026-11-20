@@ -50,6 +50,10 @@ const schema = z
       .string()
       .refine((v) => URL.canParse(v) && /^rediss?:$/.test(new URL(v).protocol), 'must be a redis:// or rediss:// URL')
       .optional(),
+    RESUMABLE_STREAMS: z.enum(['0', '1'], { error: 'must be 0 or 1' }).default('0'),
+    EVENT_STORE_MAX_EVENTS: whole.refine((n) => n >= 1, 'must be 1 or more').default(500),
+    EVENT_STORE_TTL_MS: whole.refine((n) => n >= 1, 'must be 1 or more').default(5 * 60 * 1000),
+    EVENT_STORE_DEBUG: z.enum(['0', '1'], { error: 'must be 0 or 1' }).default('0'),
     NODE_ENV: z.string().optional()
   })
   .superRefine((env, ctx) => {
@@ -90,6 +94,12 @@ export type Config = {
   sessionStore: 'memory' | 'redis';
   /** Never print this: it can contain a password. */
   redisUrl?: string;
+  /** Stage 11.3: keep stream events so a dropped stream can resume. */
+  resumableStreams: boolean;
+  eventMaxPerStream: number;
+  eventTtlMs: number;
+  /** Log one line per stream event stored or replayed (no message content). */
+  eventDebug: boolean;
 };
 
 export const MCP_PATH = '/mcp';
@@ -123,7 +133,11 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     maxBodyBytes: v.MAX_BODY_BYTES,
     ratePerMinute: v.RATE_LIMIT_PER_MINUTE,
     sessionStore: v.SESSION_STORE,
-    redisUrl: v.REDIS_URL
+    redisUrl: v.REDIS_URL,
+    resumableStreams: v.RESUMABLE_STREAMS === '1',
+    eventMaxPerStream: v.EVENT_STORE_MAX_EVENTS,
+    eventTtlMs: v.EVENT_STORE_TTL_MS,
+    eventDebug: v.EVENT_STORE_DEBUG === '1'
   };
 }
 

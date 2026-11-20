@@ -29,8 +29,22 @@ describe('loadConfig (Stage 10.5)', () => {
       maxBodyBytes: 1_048_576,
       ratePerMinute: 120,
       sessionStore: 'memory',
-      redisUrl: undefined
+      redisUrl: undefined,
+      resumableStreams: false,
+      eventMaxPerStream: 500,
+      eventTtlMs: 300_000,
+      eventDebug: false
     });
+  });
+
+  it('reads and checks the resumable-stream settings (Stage 11.3)', () => {
+    const c = loadConfig({ RESUMABLE_STREAMS: '1', EVENT_STORE_MAX_EVENTS: '50', EVENT_STORE_TTL_MS: '60000' });
+    expect([c.resumableStreams, c.eventMaxPerStream, c.eventTtlMs]).toEqual([true, 50, 60000]);
+    expect(problems({ RESUMABLE_STREAMS: 'yes' })).toEqual(['RESUMABLE_STREAMS: must be 0 or 1']);
+    expect(problems({ EVENT_STORE_MAX_EVENTS: '0' })).toEqual(['EVENT_STORE_MAX_EVENTS: must be 1 or more']);
+    expect(problems({ EVENT_STORE_TTL_MS: 'abc' })).toEqual(['EVENT_STORE_TTL_MS: must be a whole number, 0 or more']);
+    expect(loadConfig({ EVENT_STORE_DEBUG: '1' }).eventDebug).toBe(true);
+    expect(problems({ EVENT_STORE_DEBUG: 'on' })).toEqual(['EVENT_STORE_DEBUG: must be 0 or 1']);
   });
 
   it('reads values, derives the URL from the port, and treats an empty value as not set', () => {
