@@ -86,13 +86,13 @@ A Redis implementation of the same interface, with key expiry (D4). New settings
 *Files:* `src/session-store-redis.ts` (new), `src/config.ts`, `src/http.ts`, `package.json` (`ioredis`), tests, `.env.example`.
 *Done when:* the same contract tests pass against Redis, and a test restarts the server process and the session id still works with its `home` intact.
 
-**11.3 Resumable streams.**
+**11.3 Resumable streams. (built; off by default with `RESUMABLE_STREAMS=1`)**
 An `EventStore` (memory and Redis) passed to the transport, so events are stored per stream and replayed after `Last-Event-ID`. Bounded: a maximum number of events per stream and an expiry, set in config.
 *Files:* `src/event-store.ts` (new), `src/http.ts`, `src/config.ts`, tests.
 *Done when:* a test opens a stream, drops it, reconnects with `Last-Event-ID` and receives exactly the later events, with the store capped as configured.
 
-**11.4 Two instances behind a proxy.**
-A `docker-compose` file with Redis, two server instances and a small proxy (nginx or Caddy), with no SSE buffering. A script (or test) kills one instance mid-session. The proxy config is the start of Stage 13's gateway work, so keep it minimal.
+**11.4 Two instances behind a proxy. (built; the kill test passes after a state fix, see the branch doc)**
+A `docker-compose` file with Redis, a token issuer, two server instances and a small proxy (nginx or Caddy), with no SSE buffering. A script (or test) kills one instance mid-session. The proxy config is the start of Stage 13's gateway work, so keep it minimal.
 *Files:* `docker/compose.scale.yml`, `docker/proxy.conf`, an end-to-end script, docs.
 *Done when:* the kill test passes: the session id keeps working and its state is intact.
 
@@ -188,7 +188,7 @@ Planned Redis operations (unverified until 11.2): `SET key json PX <ttl>` to cre
 | `src/config.ts` | 11.2, 11.3 | `SESSION_STORE`, `REDIS_URL`, event-store limits, validated at startup |
 | `src/http.ts` | 11.1 built, 11.2 and 11.3 | Local map plus store; rebuild on a store hit; write state back; pass `eventStore` |
 | `src/event-store.ts` | new in 11.3 | Memory and Redis `EventStore` for `Last-Event-ID` replay |
-| `docker/compose.scale.yml`, `docker/proxy.conf` | new in 11.4 | Redis, two instances, a proxy with no SSE buffering |
+| `docker/compose.scale.yml`, `docker/proxy.conf` | new in 11.4 | Redis, a token issuer, two instances, a proxy with no SSE buffering |
 
 ### Dependencies
 
@@ -257,7 +257,7 @@ This is the shape of 11.4's end-to-end test. Nothing here has been run yet.
 | Redis down at startup with `SESSION_STORE=redis` | the server does not start, the message says why |
 | Redis goes down while running | requests that need the store get `503` with `Retry-After`, nothing else breaks |
 | Stream dropped, reconnect with `Last-Event-ID` | later events replayed |
-| `Last-Event-ID` older than the retained events | replay from the oldest retained, and the doc says events may be missing |
+| `Last-Event-ID` older than the retained events, or all of them expired | refused with an error (HTTP 500 `Error replaying events` from the SDK) and the log says the events are no longer stored; nothing is replayed with a gap |
 
 ## Risks
 
