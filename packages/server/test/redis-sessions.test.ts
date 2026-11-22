@@ -79,6 +79,29 @@ describe.skipIf(!REDIS_URL)('sessions in real Redis (Stage 11.2)', () => {
     expect(b.logs()).toContain(`session ${sessionId} rebuilt from the store`);
   });
 
+  // Stage 11.4, found by the kill test: behind a proxy, one session's requests reach
+  // both instances, so each holds a live copy. A copy must pick up a state the other
+  // instance saved, or the survivor of a kill answers from an old copy.
+  it('an instance that already holds the session picks up state saved by the other', async () => {
+    const a = await start();
+    const b = await start();
+    const { sessionId, headers } = await open(a.url);
+    const home = async (url: string) => (await messageOf(await call(url, headers, 'get_home_weather'))).result.content[0].text as string;
+    const setHome = async (url: string, name: string) =>
+      (await call(url, headers, 'set_home_location', { name, latitude: 1, longitude: 2 })).text();
+
+    await setHome(a.url, 'Dubai');
+    expect(await home(b.url)).toMatch(/^Dubai:/); // B rebuilds the session, so it now holds a live copy
+
+    await setHome(b.url, 'Paris'); // B saves a newer state
+    expect(await home(a.url)).toMatch(/^Paris:/); // A held an old copy and must refresh it
+    expect(a.logs()).toContain(`session ${sessionId} state refreshed from the store`);
+
+    await setHome(a.url, 'Cairo'); // and the other way round
+    expect(await home(b.url)).toMatch(/^Cairo:/);
+    expect(b.logs()).toContain(`session ${sessionId} state refreshed from the store`);
+  });
+
   it('a restarted server still knows the session and its state', async () => {
     const a = await start();
     const { headers } = await open(a.url);

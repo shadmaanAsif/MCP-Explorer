@@ -21,7 +21,7 @@ import {
   ScopedEventStore,
   type EventBackend
 } from './event-store.js';
-import { replayInitialize } from './session-rebuild.js';
+import { adoptStoredState, replayInitialize } from './session-rebuild.js';
 
 // Stage 10.5: every setting is read and checked once, in config.ts. A bad value
 // stops the server here with a message that names the variable.
@@ -282,6 +282,9 @@ async function handleStateful(c: Context) {
     if (!session) {
       if (record.initializeParams === undefined) return jsonRpcError(c, 404, -32001, 'Session not found');
       session = await rebuildSession(record);
+    } else if (adoptStoredState(session, record.state)) {
+      // Another instance saved a newer state since this one last loaded it.
+      console.error(`[mcp-demo] session ${sessionId} state refreshed from the store`);
     }
     await store.touch(sessionId);
     // POST (requests), GET (server → client stream), DELETE (end session)

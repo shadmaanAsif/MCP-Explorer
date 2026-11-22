@@ -3,6 +3,7 @@
 // handled `initialize`, so we replay the client's stored one (D1 A, proven in
 // test/session-rebuild.test.ts). Only the public SDK API is used.
 import type { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
+import type { SessionState } from './create-server.js';
 
 const URL_ = 'http://localhost/mcp';
 const HEADERS = { 'content-type': 'application/json', accept: 'application/json, text/event-stream' };
@@ -46,4 +47,28 @@ export async function replayInitialize(
   );
   await done.text();
   if (!done.ok) throw new Error('could not replay notifications/initialized');
+}
+
+/**
+ * Stage 11.4: a live session reads its record on every request, and another
+ * instance may have saved a newer state since this one last loaded or saved it
+ * (the proxy sends one session's requests to both). Take the record's state in.
+ *
+ * It copies into the existing `state` object, because the tools hold a reference
+ * to that object and replacing it would leave them reading the old one.
+ *
+ * `savedState` is the JSON this instance last loaded or wrote. A state that no
+ * longer matches it is a change made here that is not written back yet (a request
+ * is still running), so it is kept and the record is left for the write-back to
+ * overwrite: last writer wins. Returns whether the state changed.
+ */
+export function adoptStoredState(session: { state: SessionState; savedState: string }, stored: SessionState): boolean {
+  if (stored === session.state) return false; // the memory store hands back the same object
+  const storedJson = JSON.stringify(stored);
+  if (storedJson === session.savedState) return false; // nothing newer in the store
+  if (JSON.stringify(session.state) !== session.savedState) return false; // an unsaved local change wins
+  for (const key of Object.keys(session.state)) delete (session.state as Record<string, unknown>)[key];
+  Object.assign(session.state, structuredClone(stored));
+  session.savedState = storedJson;
+  return true;
 }
