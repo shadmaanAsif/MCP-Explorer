@@ -1,6 +1,6 @@
 # Plan: Stage 11, persistence and scaling
 
-**Phase 2, stage 3 of 5.** Branch: `21-stage-11-persistence-scaling` (cut from `main` after PR 20 merges). Status: planned.
+**Phase 2, stage 3 of 5.** Branch: `21-stage-11-persistence-scaling`. Status: built (11.1 to 11.4).
 
 ## Goal
 
