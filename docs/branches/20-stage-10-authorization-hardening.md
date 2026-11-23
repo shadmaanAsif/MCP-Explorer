@@ -215,6 +215,10 @@ Then ask it to call `add` (works) and `run_checks` (refused with `403`). The sam
 | Body over `MAX_BODY_BYTES` | `413` |
 | Any `tools/call`, allowed or refused | one `"type":"audit"` line in the server's terminal, with no argument values |
 
+## New packages
+
+None. Stage 10 reuses `zod` (version ^4.6.1), added in [Stage 1](01-stage-1-basic-server.md#dependencies) to describe tool inputs. Step 10.5 uses it a second time, in [`src/config.ts`](../../packages/server/src/config.ts), to check every environment setting at startup: it converts text to numbers, applies defaults, and collects all problems into one error list.
+
 ## Try it end to end
 
 1. Turn auth on in `packages/server/.env` (`AUTH_REQUIRED=1`), then build:

@@ -27,8 +27,24 @@ describe('loadConfig (Stage 10.5)', () => {
       authScope: 'mcp:tools',
       allowedOrigins: ['http://localhost:4767', 'http://127.0.0.1:4767'],
       maxBodyBytes: 1_048_576,
-      ratePerMinute: 120
+      ratePerMinute: 120,
+      sessionStore: 'memory',
+      redisUrl: undefined,
+      resumableStreams: false,
+      eventMaxPerStream: 500,
+      eventTtlMs: 300_000,
+      eventDebug: false
     });
+  });
+
+  it('reads and checks the resumable-stream settings (Stage 11.3)', () => {
+    const c = loadConfig({ RESUMABLE_STREAMS: '1', EVENT_STORE_MAX_EVENTS: '50', EVENT_STORE_TTL_MS: '60000' });
+    expect([c.resumableStreams, c.eventMaxPerStream, c.eventTtlMs]).toEqual([true, 50, 60000]);
+    expect(problems({ RESUMABLE_STREAMS: 'yes' })).toEqual(['RESUMABLE_STREAMS: must be 0 or 1']);
+    expect(problems({ EVENT_STORE_MAX_EVENTS: '0' })).toEqual(['EVENT_STORE_MAX_EVENTS: must be 1 or more']);
+    expect(problems({ EVENT_STORE_TTL_MS: 'abc' })).toEqual(['EVENT_STORE_TTL_MS: must be a whole number, 0 or more']);
+    expect(loadConfig({ EVENT_STORE_DEBUG: '1' }).eventDebug).toBe(true);
+    expect(problems({ EVENT_STORE_DEBUG: 'on' })).toEqual(['EVENT_STORE_DEBUG: must be 0 or 1']);
   });
 
   it('reads values, derives the URL from the port, and treats an empty value as not set', () => {
@@ -90,6 +106,25 @@ describe('loadConfig (Stage 10.5)', () => {
     expect(e!.message).not.toContain(secret);
   });
 
+  it('reads the session store settings (Stage 11.2)', () => {
+    const c = loadConfig({ SESSION_STORE: 'redis', REDIS_URL: 'redis://localhost:6379' });
+    expect(c.sessionStore).toBe('redis');
+    expect(c.redisUrl).toBe('redis://localhost:6379');
+  });
+
+  it('rejects an unknown store, a non-redis URL, and redis without a URL', () => {
+    expect(problems({ SESSION_STORE: 'file' })).toEqual(['SESSION_STORE: must be memory or redis']);
+    expect(problems({ SESSION_STORE: 'redis', REDIS_URL: 'http://x' })).toEqual([
+      'REDIS_URL: must be a redis:// or rediss:// URL'
+    ]);
+    expect(problems({ SESSION_STORE: 'redis' })).toEqual(['REDIS_URL: is required when SESSION_STORE=redis']);
+  });
+
+  it('never prints the Redis URL, which can hold a password', () => {
+    const text = problems({ SESSION_STORE: 'file', REDIS_URL: 'http://u:s3cret@x' }).join('\n');
+    expect(text).not.toContain('s3cret');
+  });
+
   it('loadConfigOrExit rethrows anything that is not a ConfigError', () => {
     expect(() => loadConfigOrExit({ MCP_SERVER_PORT: '5000' })).not.toThrow();
   });
@@ -122,6 +157,13 @@ describe('the compiled server refuses a bad config (Stage 10.5)', () => {
     const { code, output } = await runServer({ AUTH_REQUIRED: '1', ISSUER_URL: '' });
     expect(code).toBe(1);
     expect(output).toContain('ISSUER_URL: is required when AUTH_REQUIRED=1');
+  });
+
+  it('exits 1 with a clear message when Redis cannot be reached, and does not print the URL', async () => {
+    const { code, output } = await runServer({ SESSION_STORE: 'redis', REDIS_URL: 'redis://u:s3cret@127.0.0.1:1' });
+    expect(code).toBe(1);
+    expect(output).toContain('Cannot reach Redis');
+    expect(output).not.toContain('s3cret');
   });
 
   it('exits 1 in production with auth off', async () => {

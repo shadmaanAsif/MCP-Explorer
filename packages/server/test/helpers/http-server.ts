@@ -50,6 +50,8 @@ export async function startHttpServer(env: Record<string, string>): Promise<Http
     logs: () => output,
     stop: () =>
       new Promise<void>((resolve) => {
+        // Already stopped (a test may stop it early): no exit event will come.
+        if (child.exitCode !== null || child.signalCode !== null) return resolve();
         child.once('exit', () => resolve());
         child.kill('SIGTERM');
       })

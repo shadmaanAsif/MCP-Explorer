@@ -71,6 +71,7 @@ Every branch gets a global sequence number, and every numbered branch has its ow
 | 18 | [`18-run-checks-package-manager`](docs/branches/18-run-checks-package-manager.md) | Fix: `run_checks` uses the project's own package manager (npm, pnpm, yarn, bun), skips scripts that don't exist, and no longer lets pnpm install into the reviewed repo. |
 | 19 | [`19-split-review-module`](docs/branches/19-split-review-module.md) | Refactor: `review.ts` (610 lines) split into a `review/` folder with a nested `helpers/`. No behaviour change. |
 | 20 | [`20-stage-10-authorization-hardening`](docs/branches/20-stage-10-authorization-hardening.md) | Stage 10: scopes per tool and session owner, `Origin` check, rate and size limits, audit log, and a validated config that stops the server on a bad value. |
+| 21 | [`21-stage-11-persistence-scaling`](docs/branches/21-stage-11-persistence-scaling.md) | Stage 11: session store, Redis, resumable streams and two instances behind a proxy. |
 
 > **Branch numbering:** every new branch — a numbered stage or a side exploration — gets the next global sequence number (`NN-description`), so the branch list alone shows true creation order, not just which stages happen to be numbered. `stage-1-basic-server` and `explore-mcp-client` predate the convention (they are #1 and #2) and keep their original names. #3 turned out to be a side exploration rather than Stage 2, which is why the counter is global and does not reserve numbers for stages in advance. Adding a branch means adding its file in `docs/branches/` and a row to the table above.
 
@@ -112,11 +113,11 @@ flowchart TB
         direction LR
         A1["9.1<br/>Token issuer"] --> A2["9.2<br/>Protected-resource<br/>metadata"] --> A3["9.3<br/>Bearer<br/>middleware"] --> A4["9.4<br/>Client sends<br/>the token"] --> A5["9.5<br/>Tests and docs"]
     end
-    subgraph S10["Stage 10 - Authorization and hardening (built, PR #20 open)"]
+    subgraph S10["Stage 10 - Authorization and hardening (merged, #20)"]
         direction LR
         B1["10.1<br/>Scopes<br/>per tool"] --> B2["10.2<br/>Origin check"] --> B3["10.3<br/>Rate and<br/>size limits"] --> B4["10.4<br/>Audit log"] --> B5["10.5<br/>Validated config<br/>and secrets"]
     end
-    subgraph S11["Stage 11 - Persistence and scaling (planned)"]
+    subgraph S11["Stage 11 - Persistence and scaling (built, PR #21 open)"]
         direction LR
         C1["11.1<br/>Session store<br/>interface"] --> C2["11.2<br/>Redis store"] --> C3["11.3<br/>Resumable streams<br/>Last-Event-ID"] --> C4["11.4<br/>Two instances<br/>behind a proxy"]
     end
@@ -132,9 +133,9 @@ flowchart TB
     classDef built fill:#d1fae5,stroke:#059669,color:#064e3b
     classDef current fill:#fef3c7,stroke:#d97706,color:#78350f
     classDef planned fill:#e0e7ff,stroke:#6366f1,color:#312e81
-    class A1,A2,A3,A4,A5 built
-    class B1,B2,B3,B4,B5 current
-    class C1,C2,C3,C4,D1,D2,D3,D4,D5,E1,E2,E3,E4,E5 planned
+    class A1,A2,A3,A4,A5,B1,B2,B3,B4,B5 built
+    class C1,C2,C3,C4 current
+    class D1,D2,D3,D4,D5,E1,E2,E3,E4,E5 planned
 ```
 
 **Phase 3: Build the client.** Its steps are written when Phase 2 ends, so only the stages are shown.
@@ -201,7 +202,7 @@ flowchart LR
 |---|---|---|---|
 | **9. Authentication** · [plan](docs/plans/stage-9-authentication.md) | `17-stage-9-authentication` | The server is an OAuth 2.1 *resource server*: validate tokens, say how to get one. | 9.1 local token issuer · 9.2 protected-resource metadata · 9.3 bearer middleware · 9.4 client sends the token · 9.5 tests and docs |
 | **10. Authorization and hardening** · [plan](docs/plans/stage-10-authorization-hardening.md) | `20-stage-10-authorization-hardening` | What each caller may do, and a record of what they did. | 10.1 scopes per tool · 10.2 `Origin` check · 10.3 rate and size limits · 10.4 audit log · 10.5 validated config and secrets |
-| **11. Persistence and scaling** | `NN-stage-11-persistence-scaling` | Sessions outside the process, so restarts and several instances work. | 11.1 session store interface · 11.2 Redis store · 11.3 resumable streams (`Last-Event-ID`) · 11.4 two instances behind a proxy |
+| **11. Persistence and scaling** · [plan](docs/plans/stage-11-persistence-scaling.md) | `21-stage-11-persistence-scaling` | Sessions outside the process, so restarts and several instances work. | 11.1 session store interface · 11.2 Redis store · 11.3 resumable streams (`Last-Event-ID`) · 11.4 two instances behind a proxy |
 | **12. Observability** | `NN-stage-12-observability` | See the server in production and stop it cleanly. | 12.1 structured logs with a session id · 12.2 health and readiness · 12.3 metrics · 12.4 OpenTelemetry traces · 12.5 graceful shutdown |
 | **13. Containerize and deploy** | `NN-stage-13-containerize-deploy` | Ship it, update it, roll it back. | 13.1 Dockerfile · 13.2 env config · 13.3 gateway with TLS and no SSE buffering · 13.4 CD pipeline · 13.5 tool versioning policy |
 
@@ -216,4 +217,4 @@ Side branches that may come up during Phase 2 (not stages): background checks (s
 
 Stages, in order, with steps to be written when Phase 2 ends: **14** a client library (reconnect, the `401` flow) · **15** an LLM agent loop that calls tools · **16** client features (roots, sampling, elicitation) · **17** several servers at once · **18** the web UI on top of the library.
 
-**Where we are:** Phase 1 is done: Stages 1–8 are merged (Stage 8 on #16, 145 tests), along with side explorations #2, #3 and #6–#9. Phase 2 is in progress: Stage 9 is merged (#18), Stage 10 is built and its PR (#20) is open, and Stage 11 is next. Phases 2 and 3 are the plan, not a promise of exact detail.
+**Where we are:** Phase 1 is done: Stages 1–8 are merged (Stage 8 on #16, 145 tests), along with side explorations #2, #3 and #6–#9. Phase 2 is in progress: Stages 9 and 10 are merged (#18 and #20), Stage 11 is built and its PR (#21) is open, and Stage 12 is next. Phases 2 and 3 are the plan, not a promise of exact detail.

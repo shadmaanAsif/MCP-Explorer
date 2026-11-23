@@ -30,3 +30,5 @@ Goal · decisions made (and the ones still open) · steps, each with *what chang
 - A plan is not a promise. Update it when reality changes, and keep the README and the published artifact in sync.
 - When a stage starts, its plan file stays, and the branch doc (`docs/branches/NN-…`) records what actually happened.
 - Every stage's branch doc ends with a **Try it end to end** section: numbered steps from a clean start to the finished feature, each with the exact command and the expected output. Mark any step that was not run as untested. Link to it from `docs/connecting-clients.md`.
+- **The user tests each step before it is committed.** Every step's section in the branch doc must end with its own **Test it yourself** subsection, numbered from 1, that lists the commands to test it, with the expected output, and say which ones were run and which were not. Do not commit a step until the user has tested it and said so.
+- Whenever a package is installed or introduced, the branch doc explains it in a **New packages** table: what it is, why it was chosen over alternatives, where it is used, and its version. Add it in the same change that adds the package.

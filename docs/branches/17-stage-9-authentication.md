@@ -8,6 +8,7 @@
 - [Steps at a glance](#steps-at-a-glance)
 - [Config: one `.env` per package](#config-one-env-per-package)
 - [How tokens and keys work](#how-tokens-and-keys-work)
+- [New packages](#new-packages)
 - [9.1 Token issuer](#91-token-issuer)
 - [9.2 Protected-resource metadata](#92-protected-resource-metadata)
 - [9.3 Bearer middleware](#93-bearer-middleware)
@@ -93,6 +94,14 @@ There is no `d`, which would be the private part.
 | Issuer and audience | must equal `ISSUER_URL` and `MCP_SERVER_URL` | often differ (`api://app-id`, a tenant path) |
 
 I read these from our code and from what I know of the providers. I haven't tried a real provider. A candidate for 10.5: read `jwks_uri` from the metadata, make the scope claim configurable, and split the issuer and audience settings.
+
+## New packages
+
+| Package | Version | What it is | Why this one | Where it is used |
+|---|---|---|---|---|
+| `jose` | ^6.2.17 | A library for JSON Web Tokens (JWT) and keys (JWK). It creates and signs tokens, verifies signatures, and fetches a key set from a URL. | Writing signature and claim checks by hand is easy to get wrong. `jose` is small, has no dependencies, is built on web-standard crypto, and runs on Node. The other common choice, `jsonwebtoken`, has no remote key set support. | [`src/auth/issuer.ts`](../../packages/server/src/auth/issuer.ts): `generateKeyPair`, `exportJWK`, `importJWK` and `SignJWT` make keys and sign tokens. [`src/auth/middleware.ts`](../../packages/server/src/auth/middleware.ts): `jwtVerify` checks signature, issuer, audience and expiry, and `createRemoteJWKSet` fetches and caches the issuer's public keys. |
+
+I did not check the `jsonwebtoken` comparison against its current docs, so treat that one sentence as from memory.
 
 ## 9.1 Token issuer
 
