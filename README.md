@@ -117,7 +117,7 @@ flowchart TB
         direction LR
         B1["10.1<br/>Scopes<br/>per tool"] --> B2["10.2<br/>Origin check"] --> B3["10.3<br/>Rate and<br/>size limits"] --> B4["10.4<br/>Audit log"] --> B5["10.5<br/>Validated config<br/>and secrets"]
     end
-    subgraph S11["Stage 11 - Persistence and scaling (built, PR #21 open)"]
+    subgraph S11["Stage 11 - Persistence and scaling (merged, PR #21)"]
         direction LR
         C1["11.1<br/>Session store<br/>interface"] --> C2["11.2<br/>Redis store"] --> C3["11.3<br/>Resumable streams<br/>Last-Event-ID"] --> C4["11.4<br/>Two instances<br/>behind a proxy"]
     end
@@ -217,4 +217,4 @@ Side branches that may come up during Phase 2 (not stages): background checks (s
 
 Stages, in order, with steps to be written when Phase 2 ends: **14** a client library (reconnect, the `401` flow) · **15** an LLM agent loop that calls tools · **16** client features (roots, sampling, elicitation) · **17** several servers at once · **18** the web UI on top of the library.
 
-**Where we are:** Phase 1 is done: Stages 1–8 are merged (Stage 8 on #16, 145 tests), along with side explorations #2, #3 and #6–#9. Phase 2 is in progress: Stages 9 and 10 are merged (#18 and #20), Stage 11 is built and its PR (#21) is open, and Stage 12 is next. Phases 2 and 3 are the plan, not a promise of exact detail.
+**Where we are:** Phase 1 is done: Stages 1–8 are merged (Stage 8 on #16, 145 tests), along with side explorations #2, #3 and #6–#9. Phase 2 is in progress: Stages 9, 10 and 11 are merged (#18, #20 and #21), and Stage 12 is next, with its plan written. Phases 2 and 3 are the plan, not a promise of exact detail.
