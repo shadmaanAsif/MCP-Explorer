@@ -36,7 +36,9 @@ describe('loadConfig (Stage 10.5)', () => {
       eventDebug: false,
       logFormat: 'text',
       logLevel: 'info',
-      instanceId: undefined
+      instanceId: undefined,
+      adminPort: undefined,
+      adminHost: '127.0.0.1'
     });
   });
 
@@ -50,6 +52,25 @@ describe('loadConfig (Stage 10.5)', () => {
     ]);
     // An empty value counts as not set, like every other variable.
     expect(loadConfig({ LOG_LEVEL: '', INSTANCE_ID: '' }).logLevel).toBe('info');
+  });
+
+  it('reads and checks the admin settings (Stage 12.2)', () => {
+    const c = loadConfig({ ADMIN_PORT: '4771', ADMIN_HOST: '0.0.0.0' });
+    expect([c.adminPort, c.adminHost]).toEqual([4771, '0.0.0.0']);
+    // Off unless a port is given; an empty value counts as not set.
+    expect(loadConfig({ ADMIN_PORT: '' }).adminPort).toBeUndefined();
+    expect(problems({ ADMIN_PORT: '0' })).toEqual(['ADMIN_PORT: must be between 1 and 65535']);
+    expect(problems({ ADMIN_PORT: '70000' })).toEqual(['ADMIN_PORT: must be between 1 and 65535']);
+    expect(problems({ ADMIN_PORT: 'abc' })).toEqual(['ADMIN_PORT: must be a whole number, 0 or more']);
+    expect(problems({ ADMIN_HOST: 'two words' })).toEqual(['ADMIN_HOST: must be a host name or an IP address']);
+  });
+
+  it('refuses an admin port equal to the MCP port, whichever variable sets it', () => {
+    const message = ['ADMIN_PORT: must differ from the MCP port (the admin listener is a separate port)'];
+    expect(problems({ ADMIN_PORT: '4768' })).toEqual(message);
+    expect(problems({ ADMIN_PORT: '5000', MCP_SERVER_PORT: '5000' })).toEqual(message);
+    expect(problems({ ADMIN_PORT: '5000', PORT: '5000' })).toEqual(message);
+    expect(problems({ ADMIN_PORT: '4768', MCP_SERVER_PORT: '5000' })).toEqual([]);
   });
 
   it('reads and checks the resumable-stream settings (Stage 11.3)', () => {

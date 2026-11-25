@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const HTTP_ENTRY = fileURLToPath(new URL('../../build/http.js', import.meta.url));
 
-async function freePort(): Promise<number> {
+export async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const probe = createServer();
     probe.once('error', reject);

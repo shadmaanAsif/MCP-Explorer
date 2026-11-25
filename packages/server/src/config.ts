@@ -61,9 +61,22 @@ const schema = z
       .string()
       .regex(/^[\w.-]{1,64}$/, 'must be 1 to 64 letters, digits, dots, dashes or underscores')
       .optional(),
+    // Stage 12.2: the admin listener (health now, metrics in 12.3). Off unless ADMIN_PORT is set.
+    ADMIN_PORT: whole.refine((n) => n >= 1 && n <= 65535, 'must be between 1 and 65535').optional(),
+    ADMIN_HOST: z
+      .string()
+      .regex(/^[\w.:-]{1,253}$/, 'must be a host name or an IP address')
+      .default('127.0.0.1'),
     NODE_ENV: z.string().optional()
   })
   .superRefine((env, ctx) => {
+    if (env.ADMIN_PORT !== undefined && env.ADMIN_PORT === (env.MCP_SERVER_PORT ?? env.PORT ?? 4768)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['ADMIN_PORT'],
+        message: 'must differ from the MCP port (the admin listener is a separate port)'
+      });
+    }
     if (env.AUTH_REQUIRED === '1' && !env.ISSUER_URL) {
       ctx.addIssue({
         code: 'custom',
@@ -112,6 +125,10 @@ export type Config = {
   logLevel: LogLevel;
   /** Tells instances apart in their logs. Default: the host name. */
   instanceId?: string;
+  /** Stage 12.2: port of the admin listener (/healthz, /readyz). Undefined = no admin listener. */
+  adminPort?: number;
+  /** Where the admin listener binds. Default 127.0.0.1, so only this machine can reach it. */
+  adminHost: string;
 };
 
 export const MCP_PATH = '/mcp';
@@ -152,7 +169,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     eventDebug: v.EVENT_STORE_DEBUG === '1',
     logFormat: v.LOG_FORMAT,
     logLevel: v.LOG_LEVEL,
-    instanceId: v.INSTANCE_ID
+    instanceId: v.INSTANCE_ID,
+    adminPort: v.ADMIN_PORT,
+    adminHost: v.ADMIN_HOST
   };
 }
 

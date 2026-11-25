@@ -23,6 +23,7 @@ import {
 } from './event-store.js';
 import { adoptStoredState, replayInitialize } from './session-rebuild.js';
 import { configureLog, log, newRequestId, runWithContext, setContext } from './log.js';
+import { createAdminApp, startAdminServer } from './admin.js';
 
 // Stage 10.5: every setting is read and checked once, in config.ts. A bad value
 // stops the server here with a message that names the variable.
@@ -402,6 +403,21 @@ process.env.REVIEW_REQUIRE_ROOT ??= '1';
 const httpServer = serve({ fetch: app.fetch, port: PORT }, () => {
   log.info(`mcp-demo server running on http://localhost:${PORT}${MCP_PATH} (${MODE})`, { bare: true });
 });
+
+// Stage 12.2: /healthz and /readyz on their own port, only when ADMIN_PORT is set. Readiness
+// asks Redis (PING) when sessions live there; the memory store has nothing to ask. The
+// issuer is not a check: its keys are cached, and an issuer outage must not take every
+// instance out of rotation at once (decision D7).
+if (config.adminPort) {
+  const redis = redisClient;
+  startAdminServer(
+    createAdminApp({
+      isShuttingDown: () => shuttingDown,
+      checks: redis ? [{ name: 'session store', run: () => redis.ping() }] : []
+    }),
+    { port: config.adminPort, host: config.adminHost }
+  );
+}
 
 let sweeper: NodeJS.Timeout | undefined;
 if (MODE === 'stateful') {
