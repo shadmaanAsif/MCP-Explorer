@@ -72,7 +72,7 @@ Every branch gets a global sequence number, and every numbered branch has its ow
 | 19 | [`19-split-review-module`](docs/branches/19-split-review-module.md) | Refactor: `review.ts` (610 lines) split into a `review/` folder with a nested `helpers/`. No behaviour change. |
 | 20 | [`20-stage-10-authorization-hardening`](docs/branches/20-stage-10-authorization-hardening.md) | Stage 10: scopes per tool and session owner, `Origin` check, rate and size limits, audit log, and a validated config that stops the server on a bad value. |
 | 21 | [`21-stage-11-persistence-scaling`](docs/branches/21-stage-11-persistence-scaling.md) | Stage 11: session store, Redis, resumable streams and two instances behind a proxy. |
-| 22 | [`22-stage-12-observability`](docs/branches/22-stage-12-observability.md) | Stage 12: structured logs, health and readiness, metrics, traces and graceful shutdown (12.1 built). |
+| 22 | [`22-stage-12-observability`](docs/branches/22-stage-12-observability.md) | Stage 12: structured logs, health and readiness, metrics, traces and graceful shutdown (12.1 and 12.2 built). |
 
 > **Branch numbering:** every new branch — a numbered stage or a side exploration — gets the next global sequence number (`NN-description`), so the branch list alone shows true creation order, not just which stages happen to be numbered. `stage-1-basic-server` and `explore-mcp-client` predate the convention (they are #1 and #2) and keep their original names. #3 turned out to be a side exploration rather than Stage 2, which is why the counter is global and does not reserve numbers for stages in advance. Adding a branch means adding its file in `docs/branches/` and a row to the table above.
 
@@ -122,7 +122,7 @@ flowchart TB
         direction LR
         C1["11.1<br/>Session store<br/>interface"] --> C2["11.2<br/>Redis store"] --> C3["11.3<br/>Resumable streams<br/>Last-Event-ID"] --> C4["11.4<br/>Two instances<br/>behind a proxy"]
     end
-    subgraph S12["Stage 12 - Observability (in progress, 12.1 built)"]
+    subgraph S12["Stage 12 - Observability (in progress, 12.1 and 12.2 built)"]
         direction LR
         D1["12.1<br/>Structured logs<br/>with session id"] --> D2["12.2<br/>Health and<br/>readiness"] --> D3["12.3<br/>Metrics"] --> D4["12.4<br/>OpenTelemetry<br/>traces"] --> D5["12.5<br/>Graceful<br/>shutdown"]
     end
@@ -218,4 +218,4 @@ Side branches that may come up during Phase 2 (not stages): background checks (s
 
 Stages, in order, with steps to be written when Phase 2 ends: **14** a client library (reconnect, the `401` flow) · **15** an LLM agent loop that calls tools · **16** client features (roots, sampling, elicitation) · **17** several servers at once · **18** the web UI on top of the library.
 
-**Where we are:** Phase 1 is done: Stages 1–8 are merged (Stage 8 on #16, 145 tests), along with side explorations #2, #3 and #6–#9. Phase 2 is in progress: Stages 9, 10 and 11 are merged (#18, #20 and #21), and Stage 12 is in progress: its plan is written and 12.1 (structured logs) is built. Phases 2 and 3 are the plan, not a promise of exact detail.
+**Where we are:** Phase 1 is done: Stages 1–8 are merged (Stage 8 on #16, 145 tests), along with side explorations #2, #3 and #6–#9. Phase 2 is in progress: Stages 9, 10 and 11 are merged (#18, #20 and #21), and Stage 12 is in progress: its plan is written, 12.1 (structured logs) is built and committed, and 12.2 (health and readiness) is built. Phases 2 and 3 are the plan, not a promise of exact detail.
