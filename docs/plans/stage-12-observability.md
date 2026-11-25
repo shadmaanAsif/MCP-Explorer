@@ -1,6 +1,6 @@
 # Plan: Stage 12, observability
 
-**Phase 2, stage 4 of 5.** Branch: `22-stage-12-observability`. Status: planned, nothing built.
+**Phase 2, stage 4 of 5.** Branch: `22-stage-12-observability`. Status: 12.1 built; 12.2 to 12.5 planned, nothing built.
 
 ## Goal
 
@@ -57,7 +57,7 @@ Key terms:
 
 ## Starting point (read from the code, not run)
 
-- **Logging.** There is no logger. `http.ts` has 13 `console.*` calls, `create-server.ts` 6 and `auth/middleware.ts` 1 (20 in all; `config.ts`, `index.ts` and the issuer CLI print their own startup messages and stay as they are). They are plain text beginning `[mcp-demo]`. The per-request line is `METHOD /path status Nms` from a Hono middleware near the top of `http.ts`. The audit log (Stage 10.4, `src/audit.ts`) is already one JSON line per tool call, and it records the tool name only, never arguments.
+- **Logging.** There is no logger. `http.ts` has 13 `console.*` calls, `create-server.ts` 6 and `auth/middleware.ts` 1 (20 in all; `config.ts` and the issuer CLI print their own startup messages and stay as they are). **12.1 found 6 more that this count missed:** 3 in `review/index.ts`, 1 in `review/helpers/roots.ts` and 2 in the stdio entry `index.ts`. It moved all 26 to the logger. They are plain text beginning `[mcp-demo]`. The per-request line is `METHOD /path status Nms` from a Hono middleware near the top of `http.ts`. The audit log (Stage 10.4, `src/audit.ts`) is already one JSON line per tool call, and it records the tool name only, never arguments.
 - **Tool lines log arguments.** `create-server.ts` logs `get_weather called with latitude=…` and `add called with a=…, b=…` on every call. That contradicts the audit rule (names only, because arguments can hold locations or paths). 12.1 deals with it (D2).
 - **Health, readiness, metrics:** none. Any path other than `/mcp` and the Stage 9 metadata routes is `404`.
 - **Shutdown** (`shutdown()` at the end of `http.ts`): sets a flag, stops the sweeper, calls `httpServer.close()` without waiting for it, closes every session's transport, quits Redis and calls `process.exit(0)`. There is no wait for running requests, no timeout and no second-signal handling. `serve()` from `@hono/node-server` 2.1.5 returns `Server | Http2Server | Http2SecureServer` (its `.d.mts`).
@@ -75,17 +75,30 @@ Three of these steps need something to follow a request *through* code that does
 | A span for a tool call must be a child of the HTTP request's span, or of the caller's trace | The two run in different layers, and MCP and HTTP trace contexts are independent (the OpenTelemetry MCP conventions say so) |
 | Metrics must count tools without letting a client invent labels | A client can send any tool name; an unbounded label set is a denial of service on the metrics system |
 
-The first two use **`AsyncLocalStorage`** (built into Node, `node:async_hooks`): the middleware stores `{ req, session, sub, trace }` for the duration of the request, and everything it awaits can read it. That is the standard answer, but whether the SDK's handler calls stay inside that context for every kind of call (POST, the long-lived GET stream, a rebuilt session) is **unverified**. 12.1 starts with a test that proves it before anything depends on it, like the 11.1 spike.
+The first two use **`AsyncLocalStorage`** (built into Node, `node:async_hooks`): the middleware stores `{ req, session, sub, trace }` for the duration of the request, and everything it awaits can read it. That is the standard answer, but whether the SDK's handler calls stay inside that context for every kind of call (POST, the long-lived GET stream, a rebuilt session) was **unverified**. 12.1 started with a test that proves it before anything depends on it, like the 11.1 spike.
+
+**Spike result (12.1, run against the compiled server).** The context survives the SDK in every case tested:
+
+| Case | What the test saw |
+|---|---|
+| `tools/call` over POST | The tool's own log line has the call's `session` and the same `req` as the `POST /mcp 200` line and the audit line |
+| `initialize` | The `session … opened` line and the request line carry the new id, although it exists only after the SDK handled the request |
+| Events stored while a tool runs (`get_weather_batch`) | Every `event stored` line of that call has the call's `session` and `req` |
+| The `GET /mcp` replay stream | The `replay requested` line has the session and the GET's own `req`, not the POST's |
+| A session rebuilt on a second instance (Redis) | The `rebuilt from the store` line, the tool line and the request line share one `req` and the session |
+| A token with `sub` | The `sub` set after the token check appears on the tool line and the request line, and a refused request has none |
+
+Taking the middleware's `runWithContext` out made all 8 real-server tests fail, taking out the session from the header made 5 fail, and taking out `sub` made 1 fail. **Not tested:** lines written from the response-body stream callbacks (`afterBody`, for example `could not save state`) and from `transport.onclose` run when the body is read or the transport closes, which may be outside the request's context. Those lines get their `session` as an explicit field instead of relying on the context.
 
 ## Decisions
 
 | # | Decision | Proposal | Status |
 |---|---|---|---|
 | D1 | Logger | A small `src/log.ts` of our own (levels, fields, text or JSON, request context), no new dependency. The alternative is `pino` 10.4.0 (npm). We already hand-write JSON for the audit log, and the stage is about *which fields* and *where they come from*, not about a logging library | accepted |
-| D2 | Tool-argument log lines | Move them from info to `debug` (off by default). They are the only place arguments are logged, and the audit log's rule is "names only" | accepted, changes what the default log shows |
-| D3 | Log text compatibility | Keep every `msg` exactly as today, including the ids inside it (`session <id> opened`), and add the fields next to it. The text format is `<today's line> key=value …`. The JSON format has `"msg":"session <id> opened"` plus `"session":"<id>"`. The redundancy is deliberate: the three readers in "Starting point" keep working unchanged | proposed |
-| D4 | Format and level | `LOG_FORMAT=text\|json` (default `text`, so a laptop run looks as today) and `LOG_LEVEL=debug\|info\|warn\|error` (default `info`). Stage 13's container sets `json` | proposed |
-| D5 | Request context | `AsyncLocalStorage` (built in, no package). The request log middleware opens it; session open and rebuild fill in `session`; the token check fills in `sub` | proposed, unverified (see "The hard part") |
+| D2 | Tool-argument log lines | Move them from info to `debug` (off by default). They are the only place arguments are logged, and the audit log's rule is "names only" | accepted, changes what the default log shows. **Built in 12.1 for every tool-entry line:** the 5 in `create-server.ts` and the 3 in `review/index.ts` (`get_diff`, `read_file`, `run_checks`), because all print arguments or paths |
+| D3 | Log text compatibility | Keep every `msg` exactly as today, including the ids inside it (`session <id> opened`), and add the fields next to it. The text format is `<today's line> key=value …`. The JSON format has `"msg":"session <id> opened"` plus `"session":"<id>"`. The redundancy is deliberate: the three readers in "Starting point" keep working unchanged. The text format prints `[mcp-demo] ` before the message, except for the two start-up lines that never had it | built in 12.1 |
+| D4 | Format and level | `LOG_FORMAT=text\|json` (default `text`, so a laptop run looks as today) and `LOG_LEVEL=debug\|info\|warn\|error` (default `info`). Stage 13's container sets `json`. Both are checked at startup like the other settings. `INSTANCE_ID` is 1 to 64 letters, digits, dots, dashes or underscores | built in 12.1 |
+| D5 | Request context | `AsyncLocalStorage` (built in, no package). The request log middleware opens it; session open and rebuild fill in `session`; the token check fills in `sub` | built in 12.1, verified (see "The hard part") |
 | D6 | Where health and metrics live | A **separate admin listener** on `ADMIN_PORT`, bound to `ADMIN_HOST` (default `127.0.0.1`), off when `ADMIN_PORT` is unset. Not on the MCP port: then the Origin, auth and rate-limit guards and the proxy's `location /` never see `/metrics`, so it cannot be exposed by accident. The cost is one more port. The alternative is the MCP port with the proxy not routing them | accepted |
 | D7 | Readiness checks | Not shutting down, and the session store answers (Redis `PING` within 1 s, cached 2 s; the memory store is always ok). The issuer is **not** checked: keys are cached, and an issuer outage must not take every instance out of rotation at once | proposed |
 | D8 | Metrics library | `prom-client` (npm lists 15.1.3, modified 2026-08-25): a pull endpoint needs no collector. The alternative is the OpenTelemetry metrics SDK. Labels are fixed small sets only: `method`, `tool` (known names, else `other`), `status_class`, `outcome`. Never a session id or `sub` | proposed, unchecked against its docs |
@@ -98,7 +111,7 @@ The first two use **`AsyncLocalStorage`** (built into Node, `node:async_hooks`):
 
 **12.1 Structured logs with a session id.**
 Add `src/log.ts`: levels, `LOG_FORMAT`, `LOG_LEVEL`, an `instance` field (`INSTANCE_ID` or the hostname, so logs from two instances are told apart), and a request context in `AsyncLocalStorage`. The request middleware creates `req` (a short random id) and the context; session open and rebuild set `session`; the token check sets `sub`. Replace the 20 `console.*` calls in `http.ts`, `create-server.ts` and `auth/middleware.ts` (D3 keeps the text). Move the argument-logging lines to `debug` (D2). Leave the audit log's shape alone (its tests stay), but let it carry `req` and `trace_id` when they exist. Start with the context test from "The hard part".
-*Files:* `src/log.ts` (new), `src/http.ts`, `src/create-server.ts`, `src/auth/middleware.ts`, `src/config.ts`, `packages/server/.env.example`, `test/log.test.ts` (new).
+*Files:* `src/log.ts` (new), `src/http.ts`, `src/create-server.ts`, `src/auth/middleware.ts`, `src/config.ts`, `packages/server/.env.example`, `test/log.test.ts` (new). Built with these as well: `src/audit.ts` (`req` on audit lines), `src/index.ts` (stdio), `src/review/index.ts`, `src/review/helpers/roots.ts` and `test/config.test.ts`.
 *Done when:* in JSON mode a tool's log line has the right `session` and `req` (proven for a POST call, a rebuilt session and a `GET` stream); in text mode every existing line still starts with today's text and the 3 readers in "Starting point" pass unchanged; a token never appears in any line; the argument lines are gone at `info` and back at `debug`.
 
 **12.2 Health and readiness.**
