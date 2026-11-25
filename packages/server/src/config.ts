@@ -8,6 +8,7 @@ import {
   DEFAULT_RATE_PER_MINUTE,
   parseAllowedOrigins
 } from './http-guards.js';
+import { LOG_FORMATS, LOG_LEVELS, type LogFormat, type LogLevel } from './log.js';
 
 export class ConfigError extends Error {
   constructor(readonly problems: string[]) {
@@ -54,6 +55,12 @@ const schema = z
     EVENT_STORE_MAX_EVENTS: whole.refine((n) => n >= 1, 'must be 1 or more').default(500),
     EVENT_STORE_TTL_MS: whole.refine((n) => n >= 1, 'must be 1 or more').default(5 * 60 * 1000),
     EVENT_STORE_DEBUG: z.enum(['0', '1'], { error: 'must be 0 or 1' }).default('0'),
+    LOG_FORMAT: z.enum(LOG_FORMATS, { error: 'must be text or json' }).default('text'),
+    LOG_LEVEL: z.enum(LOG_LEVELS, { error: 'must be debug, info, warn or error' }).default('info'),
+    INSTANCE_ID: z
+      .string()
+      .regex(/^[\w.-]{1,64}$/, 'must be 1 to 64 letters, digits, dots, dashes or underscores')
+      .optional(),
     NODE_ENV: z.string().optional()
   })
   .superRefine((env, ctx) => {
@@ -100,6 +107,11 @@ export type Config = {
   eventTtlMs: number;
   /** Log one line per stream event stored or replayed (no message content). */
   eventDebug: boolean;
+  /** Stage 12.1: `text` keeps today's lines (plus a key=value tail); `json` is one object per line. */
+  logFormat: LogFormat;
+  logLevel: LogLevel;
+  /** Tells instances apart in their logs. Default: the host name. */
+  instanceId?: string;
 };
 
 export const MCP_PATH = '/mcp';
@@ -137,7 +149,10 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     resumableStreams: v.RESUMABLE_STREAMS === '1',
     eventMaxPerStream: v.EVENT_STORE_MAX_EVENTS,
     eventTtlMs: v.EVENT_STORE_TTL_MS,
-    eventDebug: v.EVENT_STORE_DEBUG === '1'
+    eventDebug: v.EVENT_STORE_DEBUG === '1',
+    logFormat: v.LOG_FORMAT,
+    logLevel: v.LOG_LEVEL,
+    instanceId: v.INSTANCE_ID
   };
 }
 

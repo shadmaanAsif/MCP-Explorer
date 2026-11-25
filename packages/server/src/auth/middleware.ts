@@ -4,6 +4,7 @@
 // 401 or 400 with a WWW-Authenticate header that says where to get a token.
 import type { MiddlewareHandler } from 'hono';
 import { createRemoteJWKSet, errors, jwtVerify, type JWTVerifyGetKey } from 'jose';
+import { log, setContext } from '../log.js';
 
 export interface AuthInfo {
   /** Who the token is for (`sub`). */
@@ -69,13 +70,15 @@ export function bearerAuth(options: BearerAuthOptions): MiddlewareHandler<{ Vari
         subject: String(payload.sub ?? ''),
         scopes: typeof payload.scope === 'string' ? payload.scope.split(' ').filter(Boolean) : [],
       });
+      // Every line this request writes from here on names the caller (never the token).
+      setContext({ sub: String(payload.sub ?? '') || undefined });
     } catch (err) {
       if (isBadToken(err)) {
         return c.body(null, 401, {
           'WWW-Authenticate': challenge(options, { code: 'invalid_token', description: 'The token is invalid or expired' }),
         });
       }
-      console.error('[mcp-demo] could not check token (issuer keys unavailable?):', err);
+      log.error('could not check token (issuer keys unavailable?):', { err });
       return c.body(null, 503, { 'Retry-After': '5' });
     }
     await next();

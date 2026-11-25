@@ -7,6 +7,7 @@ import { ReviewError } from './helpers/errors.js';
 import { readRepoFile } from './helpers/files.js';
 import { defaultBaseBranch, gitDiff } from './helpers/git.js';
 import { assertReviewAllowed, getRoot, listFilesOrNone } from './helpers/roots.js';
+import { log } from '../log.js';
 
 // --- Code review (Stage 8) ---------------------------------------------------
 // The server does not review anything. The client's model does. The server
@@ -50,7 +51,7 @@ export function registerReview(server: McpServer): void {
       }
     },
     async ({ base, head, root: requested }, extra) => {
-      console.error(`[mcp-demo] get_diff ${base}...${head}`);
+      log.debug(`get_diff ${base}...${head}`);
       try {
         const root = await getRoot(server, requested);
         return textResult(await gitDiff(root, base, head, extra.signal), root);
@@ -75,7 +76,7 @@ export function registerReview(server: McpServer): void {
       }
     },
     async ({ path: relativePath, root: requested }) => {
-      console.error(`[mcp-demo] read_file ${relativePath}`);
+      log.debug(`read_file ${relativePath}`);
       try {
         const root = await getRoot(server, requested);
         return textResult(await readRepoFile(root, relativePath), root);
@@ -132,7 +133,7 @@ export function registerReview(server: McpServer): void {
       }
     },
     async ({ checks, root: requested }, extra) => {
-      console.error(`[mcp-demo] run_checks ${checks.join(', ')}`);
+      log.debug(`run_checks ${checks.join(', ')}`);
       const progressToken = extra._meta?.progressToken;
       let root: string;
       try {

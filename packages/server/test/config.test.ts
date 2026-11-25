@@ -33,8 +33,23 @@ describe('loadConfig (Stage 10.5)', () => {
       resumableStreams: false,
       eventMaxPerStream: 500,
       eventTtlMs: 300_000,
-      eventDebug: false
+      eventDebug: false,
+      logFormat: 'text',
+      logLevel: 'info',
+      instanceId: undefined
     });
+  });
+
+  it('reads and checks the log settings (Stage 12.1)', () => {
+    const c = loadConfig({ LOG_FORMAT: 'json', LOG_LEVEL: 'debug', INSTANCE_ID: 'server-a' });
+    expect([c.logFormat, c.logLevel, c.instanceId]).toEqual(['json', 'debug', 'server-a']);
+    expect(problems({ LOG_FORMAT: 'yaml' })).toEqual(['LOG_FORMAT: must be text or json']);
+    expect(problems({ LOG_LEVEL: 'loud' })).toEqual(['LOG_LEVEL: must be debug, info, warn or error']);
+    expect(problems({ INSTANCE_ID: 'two words' })).toEqual([
+      'INSTANCE_ID: must be 1 to 64 letters, digits, dots, dashes or underscores'
+    ]);
+    // An empty value counts as not set, like every other variable.
+    expect(loadConfig({ LOG_LEVEL: '', INSTANCE_ID: '' }).logLevel).toBe('info');
   });
 
   it('reads and checks the resumable-stream settings (Stage 11.3)', () => {

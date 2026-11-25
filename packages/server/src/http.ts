@@ -22,10 +22,13 @@ import {
   type EventBackend
 } from './event-store.js';
 import { adoptStoredState, replayInitialize } from './session-rebuild.js';
+import { configureLog, log, newRequestId, runWithContext, setContext } from './log.js';
 
 // Stage 10.5: every setting is read and checked once, in config.ts. A bad value
 // stops the server here with a message that names the variable.
 const config = loadConfigOrExit();
+// Stage 12.1: from here on every line goes through the logger, in the chosen format.
+configureLog({ format: config.logFormat, level: config.logLevel, instance: config.instanceId });
 const PORT = config.port;
 const MCP_SERVER_URL = config.mcpServerUrl;
 const ISSUER_URL = config.issuerUrl;
@@ -134,14 +137,14 @@ async function makeStore(): Promise<SessionStore> {
   redis.on('error', () => {
     if (Date.now() - lastWarn > 10_000) {
       lastWarn = Date.now();
-      console.error('[mcp-demo] session store (Redis) connection problem');
+      log.warn('session store (Redis) connection problem');
     }
   });
   try {
     await redis.connect();
     await redis.ping();
   } catch {
-    console.error('Cannot reach Redis (SESSION_STORE=redis). Check REDIS_URL and that Redis is running.');
+    log.error('Cannot reach Redis (SESSION_STORE=redis). Check REDIS_URL and that Redis is running.', { bare: true });
     process.exit(1);
   }
   redisClient = redis;
@@ -191,7 +194,7 @@ async function buildSession(opts: {
       ? new ScopedEventStore(
           eventBackend,
           () => transportRef?.sessionId,
-          config.eventDebug ? (line) => console.error(`[mcp-demo] ${line}`) : undefined
+          config.eventDebug ? (line) => log.info(line) : undefined
         )
       : undefined,
     // The id only exists once the initialize request is handled, so the
@@ -201,7 +204,7 @@ async function buildSession(opts: {
       const now = Date.now();
       await store.set({ id, owner: opts.owner, state, initializeParams: opts.initializeParams, createdAt: now, lastSeen: now });
       sessions.set(id, session);
-      console.error(`[mcp-demo] session ${id} opened (${sessions.size} active)`);
+      log.info(`session ${id} opened (${sessions.size} active)`, { session: id });
     }
   });
   transportRef = transport;
@@ -213,7 +216,7 @@ async function buildSession(opts: {
     if (id && sessions.get(id) === session) {
       sessions.delete(id);
       if (!shuttingDown) store.delete(id).catch(() => {});
-      console.error(`[mcp-demo] session ${id} closed (${sessions.size} active)`);
+      log.info(`session ${id} closed (${sessions.size} active)`, { session: id });
     }
   };
   await server.connect(transport);
@@ -238,7 +241,7 @@ function rebuildSession(record: SessionRecord): Promise<Session> {
         throw error;
       }
       sessions.set(record.id, session);
-      console.error(`[mcp-demo] session ${record.id} rebuilt from the store (${sessions.size} active)`);
+      log.info(`session ${record.id} rebuilt from the store (${sessions.size} active)`, { session: record.id });
       return session;
     })().finally(() => rebuilding.delete(record.id));
     rebuilding.set(record.id, pending);
@@ -257,7 +260,7 @@ async function persistState(id: string, session: Session) {
     await store.set({ ...record, state: session.state });
     session.savedState = json;
   } catch (error) {
-    console.error(`[mcp-demo] could not save state for session ${id}:`, error instanceof Error ? error.message : error);
+    log.warn(`could not save state for session ${id}: ${error instanceof Error ? error.message : error}`, { session: id });
   }
 }
 
@@ -265,6 +268,7 @@ async function handleStateful(c: Context) {
   const sessionId = c.req.header(SESSION_HEADER);
 
   if (sessionId) {
+    setContext({ session: sessionId });
     let session = sessions.get(sessionId);
     const record = await store.get(sessionId);
     if (!record) {
@@ -284,7 +288,7 @@ async function handleStateful(c: Context) {
       session = await rebuildSession(record);
     } else if (adoptStoredState(session, record.state)) {
       // Another instance saved a newer state since this one last loaded it.
-      console.error(`[mcp-demo] session ${sessionId} state refreshed from the store`);
+      log.info(`session ${sessionId} state refreshed from the store`);
     }
     await store.touch(sessionId);
     // POST (requests), GET (server → client stream), DELETE (end session)
@@ -305,7 +309,10 @@ async function handleStateful(c: Context) {
     return jsonRpcError(c, 400, -32000, 'Missing Mcp-Session-Id: send an initialize request first');
   }
   const session = await createSession(callerOf(c), (body as { params?: unknown }).params);
-  return session.transport.handleRequest(c.req.raw, { parsedBody: body, authInfo: authInfoOf(c) });
+  const response = await session.transport.handleRequest(c.req.raw, { parsedBody: body, authInfo: authInfoOf(c) });
+  // The id exists only now; the request line logged after this carries it.
+  setContext({ session: session.transport.sessionId });
+  return response;
 }
 
 // Clients that vanish without sending DELETE would otherwise leak sessions.
@@ -315,7 +322,7 @@ async function sweepIdleSessions() {
     const record = await store.get(id);
     // No record: it expired in the store (Redis key expiry), so close the live object.
     if (!record || record.lastSeen < cutoff) {
-      console.error(`[mcp-demo] session ${id} idle for over ${SESSION_TTL_MS}ms, closing`);
+      log.info(`session ${id} idle for over ${SESSION_TTL_MS}ms, closing`, { session: id });
       void session.transport.close();
     }
   }
@@ -327,11 +334,15 @@ const app = new Hono();
 
 // Middleware runs for every request, in order. Later stages add auth (Stage 9),
 // Origin checks and rate limits (Stage 10) and tracing (Stage 12) here.
-app.use('*', async (c, next) => {
-  const start = Date.now();
-  await next();
-  console.error(`[mcp-demo] ${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status} ${Date.now() - start}ms`);
-});
+// Stage 12.1: it also opens the request context, so every line written while this
+// request runs carries the same `req` (and the session and caller, once known).
+app.use('*', (c, next) =>
+  runWithContext({ req: newRequestId() }, async () => {
+    const start = Date.now();
+    await next();
+    log.info(`${c.req.method} ${new URL(c.req.url).pathname} ${c.res.status} ${Date.now() - start}ms`);
+  })
+);
 
 // Public: a client reads this before it has a token (Stage 9.2).
 app.route('/', resourceMetadataApp(MCP_SERVER_URL, ISSUER_URL));
@@ -375,7 +386,7 @@ app.onError((error, c) => {
       'Retry-After': '5'
     });
   }
-  console.error('[mcp-demo] error handling request:', error);
+  log.error('error handling request:', { err: error });
   return jsonRpcError(c, 500, -32603, 'Internal server error');
 });
 
@@ -389,15 +400,13 @@ process.env.REVIEW_TRANSPORT = 'http';
 process.env.REVIEW_REQUIRE_ROOT ??= '1';
 
 const httpServer = serve({ fetch: app.fetch, port: PORT }, () => {
-  // Safe to use console.log here, unlike the stdio entry: stdout isn't the
-  // protocol channel over HTTP. console.error kept for consistency.
-  console.error(`mcp-demo server running on http://localhost:${PORT}${MCP_PATH} (${MODE})`);
+  log.info(`mcp-demo server running on http://localhost:${PORT}${MCP_PATH} (${MODE})`, { bare: true });
 });
 
 let sweeper: NodeJS.Timeout | undefined;
 if (MODE === 'stateful') {
   sweeper = setInterval(() => {
-    sweepIdleSessions().catch((err) => console.error('[mcp-demo] idle sweep failed:', err));
+    sweepIdleSessions().catch((err) => log.error('idle sweep failed:', { err }));
   }, SWEEP_INTERVAL_MS);
   sweeper.unref();
 }

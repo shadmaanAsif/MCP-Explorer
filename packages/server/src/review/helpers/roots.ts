@@ -5,6 +5,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ReviewError } from './errors.js';
 import { gitToplevel } from './git.js';
 import { isInside, listRepoFiles } from './files.js';
+import { log } from '../../log.js';
 
 let defaultRoot: Promise<string> | undefined;
 
@@ -88,7 +89,7 @@ export async function getRoot(server: McpServer, requested?: string): Promise<st
     try {
       const real = await fs.realpath(root);
       if (await isAllowedRoot(real)) return fs.realpath(await gitToplevel(real));
-      console.error(`[mcp-demo] ignoring client root outside REVIEW_ALLOWED_ROOTS: ${real}`);
+      log.warn(`ignoring client root outside REVIEW_ALLOWED_ROOTS: ${real}`);
     } catch {
       // root no longer exists; try the next one
     }

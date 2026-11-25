@@ -3,9 +3,13 @@
 // the result, because those can hold paths, locations or file contents.
 // HTTP only: the stdio server has no callers to tell apart.
 
+import { currentContext } from './log.js';
+
 export type AuditEvent = {
   type: 'audit';
   time: string;
+  /** Stage 12.1: the request this call belongs to, to match it with the other log lines. */
+  req?: string;
   /** The token's `sub`, or null when auth is off. */
   sub: string | null;
   session: string | null;
@@ -29,7 +33,8 @@ export function auditEvent(
   fields: Omit<AuditEvent, 'type' | 'time'>,
   sink: AuditSink = auditToStderr
 ): void {
-  sink({ type: 'audit', time: new Date().toISOString(), ...fields });
+  const req = currentContext()?.req;
+  sink({ type: 'audit', time: new Date().toISOString(), ...(req ? { req } : {}), ...fields });
 }
 
 type ToolExtra = { authInfo?: { clientId?: string }; sessionId?: string };

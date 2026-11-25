@@ -3,6 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { registerCatalog } from './catalog.js';
 import { registerReview } from './review/index.js';
+import { log } from './log.js';
 
 // --- get_weather: talking to Open-Meteo without trusting it -----------------
 // The upstream API can be slow, down, or reply with something unexpected, and
@@ -104,7 +105,7 @@ export async function fetchWeather(latitude: number, longitude: number, callerSi
 
     if (attempt < MAX_RETRIES) {
       const delay = retryBaseDelayMs() * 2 ** attempt;
-      console.error(`[mcp-demo] get_weather attempt ${attempt + 1} failed (${lastFailure}); retrying in ${delay}ms`);
+      log.warn(`get_weather attempt ${attempt + 1} failed (${lastFailure}); retrying in ${delay}ms`);
       await sleep(delay, callerSignal);
     }
   }
@@ -149,7 +150,7 @@ export function createServer(session: SessionState = {}, audit?: AuditSink): Mcp
       }
     },
     async ({ a, b }) => {
-      console.error(`[mcp-demo] add called with a=${a}, b=${b}`);
+      log.debug(`add called with a=${a}, b=${b}`);
       return {
         content: [
           {
@@ -181,7 +182,7 @@ export function createServer(session: SessionState = {}, audit?: AuditSink): Mcp
       }
     },
     async ({ a, b }) => {
-      console.error(`[mcp-demo] divide called with a=${a}, b=${b}`);
+      log.debug(`divide called with a=${a}, b=${b}`);
       return {
         content: [
           {
@@ -208,7 +209,7 @@ export function createServer(session: SessionState = {}, audit?: AuditSink): Mcp
       }
     },
     async ({ latitude, longitude }, extra) => {
-      console.error(`[mcp-demo] get_weather called with latitude=${latitude}, longitude=${longitude}`);
+      log.debug(`get_weather called with latitude=${latitude}, longitude=${longitude}`);
       const result = await fetchWeather(latitude, longitude, extra.signal);
       if (!result.ok) {
         return { isError: true, content: [{ type: 'text', text: result.message }] };
@@ -242,7 +243,7 @@ export function createServer(session: SessionState = {}, audit?: AuditSink): Mcp
       }
     },
     async ({ locations }, extra) => {
-      console.error(`[mcp-demo] get_weather_batch called with ${locations.length} locations`);
+      log.debug(`get_weather_batch called with ${locations.length} locations`);
       const progressToken = extra._meta?.progressToken;
       const lines: string[] = [];
       let failures = 0;
@@ -292,7 +293,7 @@ export function createServer(session: SessionState = {}, audit?: AuditSink): Mcp
       }
     },
     async ({ name, latitude, longitude }) => {
-      console.error(`[mcp-demo] set_home_location: ${name} (${latitude}, ${longitude})`);
+      log.debug(`set_home_location: ${name} (${latitude}, ${longitude})`);
       session.home = { name, latitude, longitude };
       return { content: [{ type: 'text', text: `Home location set to ${name}` }] };
     }
